@@ -60,8 +60,8 @@ Built for **Wayland** environments — specifically targeting compositors like [
 
 ```bash
 # Clone the repository
-git clone https://forgejo.benitez/walkeradmin/slideshow.git
-cd slideshow
+git clone https://forgejo.benitez/walkeradmin/temad.git
+cd temad
 
 # Build the release binary
 cargo build --release

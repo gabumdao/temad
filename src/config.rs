@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -192,6 +192,10 @@ pub fn load_config(path: &Path) -> Result<Config> {
 
     let config: Config = toml::from_str(&raw)
         .with_context(|| format!("Failed to parse config file: {}", path.display()))?;
+
+    if config.slideshow.interval_seconds == 0 {
+        bail!("slideshow.interval_seconds must be greater than 0");
+    }
 
     tracing::info!(path = %path.display(), "Loaded configuration");
     Ok(config)
@@ -423,6 +427,43 @@ post_update = ["echo loaded"]
 
         let result = load_config(&path);
         assert!(result.is_err(), "malformed TOML should return Err");
+    }
+
+    #[test]
+    fn load_config_rejects_zero_slideshow_interval() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("zero_interval.toml");
+        std::fs::write(
+            &path,
+            r#"
+[slideshow]
+interval_seconds = 0
+"#,
+        )
+        .expect("write");
+
+        let result = load_config(&path);
+        assert!(result.is_err(), "zero interval should return Err");
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("slideshow.interval_seconds"));
+        assert!(error.contains("greater than 0"));
+    }
+
+    #[test]
+    fn load_config_accepts_positive_slideshow_interval() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("positive_interval.toml");
+        std::fs::write(
+            &path,
+            r#"
+[slideshow]
+interval_seconds = 1
+"#,
+        )
+        .expect("write");
+
+        let config = load_config(&path).expect("positive interval should load");
+        assert_eq!(config.slideshow.interval_seconds, 1);
     }
 
     // -- resolve_config_path --------------------------------------------------

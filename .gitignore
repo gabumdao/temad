@@ -11,3 +11,8 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# Local AI tooling
+.claude/
+AGENTS.md
+CLAUDE.md

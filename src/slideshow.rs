@@ -88,6 +88,25 @@ impl ImageSelector {
         self.last.as_deref().unwrap()
     }
 
+    pub fn update_images(&mut self, images: Vec<PathBuf>) -> Result<()> {
+        if images.is_empty() {
+            bail!("No wallpaper images found in the configured directory");
+        }
+
+        let last_still_exists = self
+            .last
+            .as_ref()
+            .is_some_and(|last| images.iter().any(|path| path == last));
+
+        self.images = images;
+
+        if !last_still_exists {
+            self.last = None;
+        }
+
+        Ok(())
+    }
+
     fn next_sequential(&self) -> PathBuf {
         match &self.last {
             None => self.images[0].clone(),
@@ -139,6 +158,21 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
     let interval = std::time::Duration::from_secs(config.slideshow.interval_seconds);
 
     loop {
+        match discover_images(&wall_dir) {
+            Ok(images) => {
+                if let Err(e) = selector.update_images(images) {
+                    tracing::warn!(error = %e, dir = %wall_dir.display(), "No wallpapers available; skipping cycle");
+                    tokio::time::sleep(interval).await;
+                    continue;
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, dir = %wall_dir.display(), "Failed to refresh wallpaper directory; skipping cycle");
+                tokio::time::sleep(interval).await;
+                continue;
+            }
+        }
+
         let image = selector.next().to_path_buf();
         tracing::info!(image = %image.display(), "Applying wallpaper");
 
@@ -272,6 +306,43 @@ mod tests {
     fn selector_empty_pool_errors() {
         let result = ImageSelector::new(Vec::new(), true);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn selector_update_picks_up_added_image_in_sequential_mode() {
+        let mut sel = ImageSelector::new(vec![PathBuf::from("/img/a.jpg")], false).unwrap();
+
+        assert_eq!(sel.next(), Path::new("/img/a.jpg"));
+
+        sel.update_images(vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")])
+            .unwrap();
+
+        assert_eq!(sel.next(), Path::new("/img/b.jpg"));
+    }
+
+    #[test]
+    fn selector_update_drops_removed_image_from_rotation() {
+        let mut sel = ImageSelector::new(
+            vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")],
+            false,
+        )
+        .unwrap();
+
+        assert_eq!(sel.next(), Path::new("/img/a.jpg"));
+
+        sel.update_images(vec![PathBuf::from("/img/b.jpg")]).unwrap();
+
+        assert_eq!(sel.next(), Path::new("/img/b.jpg"));
+    }
+
+    #[test]
+    fn selector_update_rejects_empty_pool_without_losing_previous_images() {
+        let mut sel = ImageSelector::new(vec![PathBuf::from("/img/a.jpg")], false).unwrap();
+
+        let result = sel.update_images(Vec::new());
+        assert!(result.is_err());
+
+        assert_eq!(sel.next(), Path::new("/img/a.jpg"));
     }
 
     // =========================================================================
@@ -477,4 +548,3 @@ mod tests {
         );
     }
 }
-

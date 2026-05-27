@@ -158,13 +158,14 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
         tracing::info!(backend = "hyprpaper", "Setting wallpaper");
 
         // Preload the image
-        let preload_cmd = format!("hyprctl hyprpaper preload {path}");
-        let output = self.runner.run_shell(&preload_cmd)?;
+        let output = self.runner.run("hyprctl", &["hyprpaper", "preload", path])?;
         check_output("hyprpaper preload", &output)?;
 
         // Set the wallpaper on all monitors
-        let set_cmd = format!("hyprctl hyprpaper wallpaper ,{path}");
-        let output = self.runner.run_shell(&set_cmd)?;
+        let wallpaper_arg = format!(",{path}");
+        let output = self
+            .runner
+            .run("hyprctl", &["hyprpaper", "wallpaper", &wallpaper_arg])?;
         check_output("hyprpaper wallpaper", &output)?;
 
         Ok(())
@@ -474,12 +475,12 @@ mod tests {
 
         let invocations = runner.invocations();
         assert_eq!(invocations.len(), 2);
-        assert!(invocations[0].is_shell);
-        assert!(invocations[0].args[1].contains("preload"));
-        assert!(invocations[0].args[1].contains("/tmp/wall.png"));
-        assert!(invocations[1].is_shell);
-        assert!(invocations[1].args[1].contains("wallpaper"));
-        assert!(invocations[1].args[1].contains(",/tmp/wall.png"));
+        assert_eq!(invocations[0].program, "hyprctl");
+        assert!(!invocations[0].is_shell);
+        assert_eq!(invocations[0].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
+        assert_eq!(invocations[1].program, "hyprctl");
+        assert!(!invocations[1].is_shell);
+        assert_eq!(invocations[1].args, vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]);
     }
 
     #[test]
@@ -747,8 +748,12 @@ mod tests {
         assert_eq!(invocations.len(), 4);
         assert_eq!(invocations[0].program, "matugen");
         assert_eq!(invocations[0].args, vec!["image", "/tmp/wall.png"]);
-        assert!(invocations[1].args[1].contains("preload /tmp/wall.png"));
-        assert!(invocations[2].args[1].contains("wallpaper ,/tmp/wall.png"));
+        assert_eq!(invocations[1].program, "hyprctl");
+        assert!(!invocations[1].is_shell);
+        assert_eq!(invocations[1].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
+        assert_eq!(invocations[2].program, "hyprctl");
+        assert!(!invocations[2].is_shell);
+        assert_eq!(invocations[2].args, vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]);
         // Hook should NOT source colors.sh (matugen, not wallust)
         assert_eq!(invocations[3].args[1], "swaync-client -rs");
     }
@@ -860,8 +865,6 @@ mod tests {
         assert_eq!(cmd, "pkill dunst && dunst &");
     }
 
-    // -- hyprpaper exact command strings --------------------------------------
-
     #[test]
     fn hyprpaper_preload_and_wallpaper_exact_format() {
         let config = Config {
@@ -879,13 +882,48 @@ mod tests {
             .expect("should succeed");
 
         let invocations = runner.invocations();
+        assert_eq!(invocations[0].program, "hyprctl");
+        assert!(!invocations[0].is_shell);
         assert_eq!(
-            invocations[0].args[1],
-            "hyprctl hyprpaper preload /home/user/Pictures/sunset.jpg"
+            invocations[0].args,
+            vec!["hyprpaper", "preload", "/home/user/Pictures/sunset.jpg"]
         );
+        assert_eq!(invocations[1].program, "hyprctl");
+        assert!(!invocations[1].is_shell);
         assert_eq!(
-            invocations[1].args[1],
-            "hyprctl hyprpaper wallpaper ,/home/user/Pictures/sunset.jpg"
+            invocations[1].args,
+            vec!["hyprpaper", "wallpaper", ",/home/user/Pictures/sunset.jpg"]
+        );
+    }
+
+    #[test]
+    fn hyprpaper_path_with_spaces_is_preserved_without_shell() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Hyprpaper,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let runner = MockRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        engine
+            .apply_wallpaper("/home/user/My Pictures/wall paper.jpg")
+            .expect("should succeed");
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations[0].program, "hyprctl");
+        assert!(!invocations[0].is_shell);
+        assert_eq!(
+            invocations[0].args,
+            vec!["hyprpaper", "preload", "/home/user/My Pictures/wall paper.jpg"]
+        );
+        assert_eq!(invocations[1].program, "hyprctl");
+        assert!(!invocations[1].is_shell);
+        assert_eq!(
+            invocations[1].args,
+            vec!["hyprpaper", "wallpaper", ",/home/user/My Pictures/wall paper.jpg"]
         );
     }
 
@@ -1014,4 +1052,3 @@ mod tests {
         assert_eq!(count, 3, "all 3 hooks must execute even if one fails");
     }
 }
-

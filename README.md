@@ -16,7 +16,7 @@ Built for **Wayland** environments — specifically targeting compositors like [
 - **Wallust Variable Sourcing** — When using `wallust`, hook commands automatically have access to color variables like `$color2`, `$background`, `$foreground`, etc.
 - **Slideshow Daemon** — Background daemon with configurable interval, random or sequential image cycling, and no-repeat guarantee.
 - **One-Shot Mode** — Immediately set a specific wallpaper and apply the full theme pipeline.
-- **Next/Previous Wallpaper Mode** — Move through wallpapers on demand using your configured random/sequential behavior with tiny persisted state.
+- **Next/Previous Wallpaper Mode** — Move through wallpapers on demand using your configured random/sequential behavior with a tiny bounded history state.
 
 ---
 
@@ -246,7 +246,7 @@ This immediately runs the full pipeline (color extraction → wallpaper → hook
 temad next
 ```
 
-This selects and applies one wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it advances from the last successfully applied image; in random mode it avoids immediately repeating the last applied image when possible. `temad` persists only the last applied image path in a tiny XDG state file so the command stays consistent across runs without heavy disk writes.
+This selects and applies one wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it advances from the last successfully applied image; in random mode it avoids immediately repeating the current image when possible. `temad` persists a tiny bounded history in XDG state so `next` and `prev` stay consistent across runs without heavy disk writes.
 
 ### Apply the Previous Wallpaper
 
@@ -254,7 +254,7 @@ This selects and applies one wallpaper from the configured directory using `[sli
 temad prev
 ```
 
-This selects and applies the previous wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it moves backward through the sorted wallpaper list, wrapping from the first image to the last. In random mode it selects another random non-repeating wallpaper when possible; because `temad` persists only the last applied image, `prev` does not restore a full random history.
+This selects and applies the previous wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it moves backward through the sorted wallpaper list, wrapping from the first image to the last. In random mode it walks backward through the bounded wallpaper history that `temad` persists, so it returns to the real previously applied wallpaper while history is available.
 
 ### CLI Options
 

@@ -22,6 +22,8 @@ pub(crate) fn is_supported_image_path(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
+const HISTORY_LIMIT: usize = 32;
+
 fn last_image_state_path() -> PathBuf {
     let state_root = dirs::state_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
@@ -30,16 +32,89 @@ fn last_image_state_path() -> PathBuf {
     state_root.join("temad").join("last_image")
 }
 
-fn encode_last_image(wall_dir: &Path, image: &Path) -> String {
-    let value = image
-        .strip_prefix(wall_dir)
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|_| image.to_path_buf());
-
-    format!("{}\n", value.display())
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct HistoryState {
+    cursor: usize,
+    entries: Vec<PathBuf>,
 }
 
-fn decode_last_image(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
+impl HistoryState {
+    fn current(&self) -> Option<&PathBuf> {
+        self.entries.get(self.cursor)
+    }
+
+    fn previous(&self) -> Option<&PathBuf> {
+        self.cursor
+            .checked_sub(1)
+            .and_then(|idx| self.entries.get(idx))
+    }
+
+    fn next(&self) -> Option<&PathBuf> {
+        self.entries.get(self.cursor + 1)
+    }
+
+    fn current_cloned(&self) -> Option<PathBuf> {
+        self.current().cloned()
+    }
+
+    fn step_prev(&mut self) {
+        if self.cursor > 0 {
+            self.cursor -= 1;
+        }
+    }
+
+    fn step_next(&mut self) {
+        if self.cursor + 1 < self.entries.len() {
+            self.cursor += 1;
+        }
+    }
+
+    fn record(&mut self, image: PathBuf) {
+        if self.current() == Some(&image) {
+            return;
+        }
+
+        if self.cursor + 1 < self.entries.len() {
+            self.entries.truncate(self.cursor + 1);
+        }
+
+        self.entries.push(image);
+        if self.entries.len() > HISTORY_LIMIT {
+            let excess = self.entries.len() - HISTORY_LIMIT;
+            self.entries.drain(0..excess);
+            self.cursor = self.cursor.saturating_sub(excess);
+        }
+        self.cursor = self.entries.len() - 1;
+    }
+
+    fn prepend_previous(&mut self, image: PathBuf) {
+        if self.current() == Some(&image) {
+            return;
+        }
+
+        if self.entries.is_empty() {
+            self.entries.push(image);
+            self.cursor = 0;
+            return;
+        }
+
+        self.entries.insert(self.cursor, image);
+        if self.entries.len() > HISTORY_LIMIT {
+            self.entries.pop();
+        }
+    }
+}
+
+fn encode_history_entry(wall_dir: &Path, image: &Path) -> String {
+    image
+        .strip_prefix(wall_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| image.to_path_buf())
+        .display()
+        .to_string()
+}
+
+fn decode_history_entry(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
     let value = raw.trim();
     if value.is_empty() {
         return None;
@@ -53,22 +128,63 @@ fn decode_last_image(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
     })
 }
 
-fn load_last_image_from(state_path: &Path, wall_dir: &Path) -> Result<Option<PathBuf>> {
+fn encode_history_state(wall_dir: &Path, state: &HistoryState) -> String {
+    let mut lines = vec![state.cursor.to_string()];
+    lines.extend(
+        state
+            .entries
+            .iter()
+            .map(|entry| encode_history_entry(wall_dir, entry)),
+    );
+    lines.join("\n") + "\n"
+}
+
+fn decode_history_state(wall_dir: &Path, raw: &str) -> HistoryState {
+    let lines: Vec<&str> = raw.lines().filter(|line| !line.trim().is_empty()).collect();
+    if lines.is_empty() {
+        return HistoryState::default();
+    }
+
+    if let Ok(cursor) = lines[0].parse::<usize>() {
+        let entries: Vec<PathBuf> = lines[1..]
+            .iter()
+            .filter_map(|line| decode_history_entry(wall_dir, line))
+            .collect();
+        if entries.is_empty() {
+            return HistoryState::default();
+        }
+        return HistoryState {
+            cursor: cursor.min(entries.len() - 1),
+            entries,
+        };
+    }
+
+    let entry = decode_history_entry(wall_dir, lines[0]);
+    match entry {
+        Some(entry) => HistoryState {
+            cursor: 0,
+            entries: vec![entry],
+        },
+        None => HistoryState::default(),
+    }
+}
+
+fn load_history_from(state_path: &Path, wall_dir: &Path) -> Result<HistoryState> {
     if !state_path.exists() {
-        return Ok(None);
+        return Ok(HistoryState::default());
     }
 
     let raw = fs::read_to_string(state_path).with_context(|| {
         format!(
-            "Failed to read last wallpaper state: {}",
+            "Failed to read wallpaper history state: {}",
             state_path.display()
         )
     })?;
-    Ok(decode_last_image(wall_dir, &raw))
+    Ok(decode_history_state(wall_dir, &raw))
 }
 
-fn persist_last_image_to(state_path: &Path, wall_dir: &Path, image: &Path) -> Result<()> {
-    let encoded = encode_last_image(wall_dir, image);
+fn persist_history_to(state_path: &Path, wall_dir: &Path, state: &HistoryState) -> Result<()> {
+    let encoded = encode_history_state(wall_dir, state);
 
     if fs::read_to_string(state_path).ok().as_deref() == Some(encoded.as_str()) {
         return Ok(());
@@ -85,18 +201,24 @@ fn persist_last_image_to(state_path: &Path, wall_dir: &Path, image: &Path) -> Re
 
     fs::write(state_path, encoded).with_context(|| {
         format!(
-            "Failed to write last wallpaper state: {}",
+            "Failed to write wallpaper history state: {}",
             state_path.display()
         )
     })
 }
 
-pub fn load_last_image(wall_dir: &Path) -> Result<Option<PathBuf>> {
-    load_last_image_from(&last_image_state_path(), wall_dir)
+fn load_history(wall_dir: &Path) -> Result<HistoryState> {
+    load_history_from(&last_image_state_path(), wall_dir)
+}
+
+fn persist_history(wall_dir: &Path, state: &HistoryState) -> Result<()> {
+    persist_history_to(&last_image_state_path(), wall_dir, state)
 }
 
 pub fn persist_last_image(wall_dir: &Path, image: &Path) -> Result<()> {
-    persist_last_image_to(&last_image_state_path(), wall_dir, image)
+    let mut state = load_history(wall_dir)?;
+    state.record(image.to_path_buf());
+    persist_history(wall_dir, &state)
 }
 
 /// Scan `directory` and return all files with a valid image extension.
@@ -293,22 +415,33 @@ pub fn run_daemon_cycle<R: CommandRunner>(
 pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
     let images = discover_images(&wall_dir)?;
-    let last = load_last_image(&wall_dir).map_err(|error| {
-        tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
-        error
-    }).ok().flatten();
-    let mut selector = match last {
+    let mut history = load_history(&wall_dir)
+        .map_err(|error| {
+            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
+            error
+        })
+        .unwrap_or_default();
+
+    let engine = Engine::new(config, runner);
+
+    if let Some(image) = history.next().cloned() {
+        tracing::info!(image = %image.display(), "Applying next wallpaper from history");
+        engine.apply(&image)?;
+        history.step_next();
+        persist_history(&wall_dir, &history)?;
+        return Ok(image);
+    }
+
+    let mut selector = match history.current_cloned() {
         Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
         None => ImageSelector::new(images, config.slideshow.randomize)?,
     };
     let image = selector.next().to_path_buf();
-    let engine = Engine::new(config, runner);
 
     tracing::info!(image = %image.display(), "Applying next wallpaper");
     engine.apply(&image)?;
-    if let Err(error) = persist_last_image(&wall_dir, &image) {
-        tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
-    }
+    history.record(image.clone());
+    persist_history(&wall_dir, &history)?;
 
     Ok(image)
 }
@@ -316,25 +449,37 @@ pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
 pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
     let images = discover_images(&wall_dir)?;
-    let last = load_last_image(&wall_dir)
+    let mut history = load_history(&wall_dir)
         .map_err(|error| {
-            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
+            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
             error
         })
-        .ok()
-        .flatten();
-    let mut selector = match last {
+        .unwrap_or_default();
+
+    let engine = Engine::new(config, runner);
+
+    if let Some(image) = history.previous().cloned() {
+        tracing::info!(image = %image.display(), "Applying previous wallpaper from history");
+        engine.apply(&image)?;
+        history.step_prev();
+        persist_history(&wall_dir, &history)?;
+        return Ok(image);
+    }
+
+    if config.slideshow.randomize {
+        bail!("No previous wallpaper available in history");
+    }
+
+    let mut selector = match history.current_cloned() {
         Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
         None => ImageSelector::new(images, config.slideshow.randomize)?,
     };
     let image = selector.prev().to_path_buf();
-    let engine = Engine::new(config, runner);
 
     tracing::info!(image = %image.display(), "Applying previous wallpaper");
     engine.apply(&image)?;
-    if let Err(error) = persist_last_image(&wall_dir, &image) {
-        tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
-    }
+    history.prepend_previous(image.clone());
+    persist_history(&wall_dir, &history)?;
 
     Ok(image)
 }
@@ -349,15 +494,15 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
         "Image pool ready"
     );
 
-    let last = match load_last_image(&wall_dir) {
-        Ok(last) => last,
+    let mut history = match load_history(&wall_dir) {
+        Ok(history) => history,
         Err(error) => {
-            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
-            None
+            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
+            HistoryState::default()
         }
     };
 
-    let mut selector = match last {
+    let mut selector = match history.current_cloned() {
         Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
         None => ImageSelector::new(images, config.slideshow.randomize)?,
     };
@@ -366,8 +511,9 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
 
     loop {
         if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
-            if let Err(error) = persist_last_image(&wall_dir, &image) {
-                tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
+            history.record(image.clone());
+            if let Err(error) = persist_history(&wall_dir, &history) {
+                tracing::warn!(error = %error, path = %image.display(), "Failed to persist wallpaper history state");
             }
         }
 
@@ -775,16 +921,86 @@ mod tests {
         let state_path = state_dir.path().join("last_image");
         let image = dir.path().join("b.jpg");
 
-        persist_last_image_to(&state_path, dir.path(), &image).expect("persist state");
+        persist_history_to(
+            &state_path,
+            dir.path(),
+            &HistoryState {
+                cursor: 0,
+                entries: vec![image.clone()],
+            },
+        )
+        .expect("persist state");
         let raw = fs::read_to_string(&state_path).expect("read state file");
+        assert_eq!(raw, "0\nb.jpg\n");
+
+        let loaded = load_history_from(&state_path, dir.path()).expect("load history");
+        assert_eq!(loaded.current(), Some(&image));
+    }
+
+    #[test]
+    fn history_record_truncates_forward_entries() {
+        let mut history = HistoryState {
+            cursor: 1,
+            entries: vec![
+                PathBuf::from("/img/a.jpg"),
+                PathBuf::from("/img/b.jpg"),
+                PathBuf::from("/img/c.jpg"),
+            ],
+        };
+
+        history.record(PathBuf::from("/img/d.jpg"));
+
         assert_eq!(
-            raw,
-            "b.jpg
-"
+            history.entries,
+            vec![
+                PathBuf::from("/img/a.jpg"),
+                PathBuf::from("/img/b.jpg"),
+                PathBuf::from("/img/d.jpg"),
+            ]
+        );
+        assert_eq!(history.cursor, 2);
+    }
+
+    #[test]
+    fn history_record_skips_duplicate_current_image() {
+        let mut history = HistoryState {
+            cursor: 0,
+            entries: vec![PathBuf::from("/img/a.jpg")],
+        };
+
+        history.record(PathBuf::from("/img/a.jpg"));
+
+        assert_eq!(history.entries, vec![PathBuf::from("/img/a.jpg")]);
+        assert_eq!(history.cursor, 0);
+    }
+
+    #[test]
+    fn decode_history_state_supports_legacy_single_line_format() {
+        let dir = Path::new("/img");
+        let state = decode_history_state(
+            dir, "b.jpg
+",
         );
 
-        let loaded = load_last_image_from(&state_path, dir.path()).expect("load state");
-        assert_eq!(loaded, Some(image));
+        assert_eq!(state.cursor, 0);
+        assert_eq!(state.current(), Some(&dir.join("b.jpg")));
+    }
+
+    #[test]
+    fn history_navigation_moves_to_real_previous_entry() {
+        let mut history = HistoryState {
+            cursor: 2,
+            entries: vec![
+                PathBuf::from("/img/a.jpg"),
+                PathBuf::from("/img/b.jpg"),
+                PathBuf::from("/img/c.jpg"),
+            ],
+        };
+
+        assert_eq!(history.previous(), Some(&PathBuf::from("/img/b.jpg")));
+        history.step_prev();
+        assert_eq!(history.current(), Some(&PathBuf::from("/img/b.jpg")));
+        assert_eq!(history.next(), Some(&PathBuf::from("/img/c.jpg")));
     }
 
     #[test]

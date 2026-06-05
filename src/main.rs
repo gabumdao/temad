@@ -99,6 +99,10 @@ async fn main() -> Result<()> {
             let image = slideshow::run_next(&config, &runner)?;
             tracing::info!(path = %image.display(), "Applied next wallpaper");
         }
+        Command::Prev => {
+            let image = slideshow::run_prev(&config, &runner)?;
+            tracing::info!(path = %image.display(), "Applied previous wallpaper");
+        }
         Command::Completions { .. } => unreachable!("handled before config load"),
     }
 

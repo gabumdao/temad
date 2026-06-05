@@ -36,6 +36,9 @@ pub enum Command {
     /// Apply the next wallpaper from the configured directory
     Next,
 
+    /// Apply the previous wallpaper from the configured directory
+    Prev,
+
     /// Generate shell completion scripts
     Completions {
         /// Shell to generate completions for
@@ -61,6 +64,7 @@ mod tests {
         assert!(output.contains("daemon"));
         assert!(output.contains("set"));
         assert!(output.contains("next"));
+        assert!(output.contains("prev"));
         assert!(output.contains("completions"));
     }
 
@@ -68,5 +72,11 @@ mod tests {
     fn next_command_parses() {
         let cli = Cli::try_parse_from(["temad", "next"]).expect("next should parse");
         assert!(matches!(cli.command, Command::Next));
+    }
+
+    #[test]
+    fn prev_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "prev"]).expect("prev should parse");
+        assert!(matches!(cli.command, Command::Prev));
     }
 }

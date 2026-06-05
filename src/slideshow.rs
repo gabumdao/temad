@@ -175,6 +175,22 @@ impl ImageSelector {
         self.last.as_deref().unwrap()
     }
 
+    /// Pick the previous image.
+    ///
+    /// - **Sequential mode**: moves backward through the sorted list.
+    /// - **Random mode**: selects another random image that differs from the
+    ///   last persisted image when possible. Because only one image is
+    ///   persisted, this is not a full random history.
+    pub fn prev(&mut self) -> &Path {
+        let chosen = if self.randomize {
+            self.next_random()
+        } else {
+            self.prev_sequential()
+        };
+        self.last = Some(chosen.clone());
+        self.last.as_deref().unwrap()
+    }
+
     pub fn update_images(&mut self, images: Vec<PathBuf>) -> Result<()> {
         if images.is_empty() {
             bail!("No wallpaper images found in the configured directory");
@@ -204,6 +220,21 @@ impl ImageSelector {
                     .position(|p| p == prev)
                     .map(|i| (i + 1) % self.images.len())
                     .unwrap_or(0);
+                self.images[idx].clone()
+            }
+        }
+    }
+
+    fn prev_sequential(&self) -> PathBuf {
+        match &self.last {
+            None => self.images[self.images.len() - 1].clone(),
+            Some(prev) => {
+                let idx = self
+                    .images
+                    .iter()
+                    .position(|p| p == prev)
+                    .map(|i| if i == 0 { self.images.len() - 1 } else { i - 1 })
+                    .unwrap_or(self.images.len() - 1);
                 self.images[idx].clone()
             }
         }
@@ -274,6 +305,32 @@ pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
     let engine = Engine::new(config, runner);
 
     tracing::info!(image = %image.display(), "Applying next wallpaper");
+    engine.apply(&image)?;
+    if let Err(error) = persist_last_image(&wall_dir, &image) {
+        tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
+    }
+
+    Ok(image)
+}
+
+pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
+    let wall_dir = config.wallpaper_dir();
+    let images = discover_images(&wall_dir)?;
+    let last = load_last_image(&wall_dir)
+        .map_err(|error| {
+            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
+            error
+        })
+        .ok()
+        .flatten();
+    let mut selector = match last {
+        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
+        None => ImageSelector::new(images, config.slideshow.randomize)?,
+    };
+    let image = selector.prev().to_path_buf();
+    let engine = Engine::new(config, runner);
+
+    tracing::info!(image = %image.display(), "Applying previous wallpaper");
     engine.apply(&image)?;
     if let Err(error) = persist_last_image(&wall_dir, &image) {
         tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
@@ -636,6 +693,44 @@ mod tests {
             }
             prev = Some(picked);
         }
+    }
+
+    #[test]
+    fn selector_prev_with_last_moves_backward_sequentially() {
+        let files = vec![
+            PathBuf::from("/img/a.jpg"),
+            PathBuf::from("/img/b.jpg"),
+            PathBuf::from("/img/c.jpg"),
+        ];
+        let mut sel =
+            ImageSelector::with_last(files.clone(), false, Some(files[1].clone())).unwrap();
+
+        assert_eq!(sel.prev(), files[0].as_path());
+    }
+
+    #[test]
+    fn selector_prev_without_last_uses_last_sorted_image() {
+        let files = vec![
+            PathBuf::from("/img/a.jpg"),
+            PathBuf::from("/img/b.jpg"),
+            PathBuf::from("/img/c.jpg"),
+        ];
+        let mut sel = ImageSelector::new(files.clone(), false).unwrap();
+
+        assert_eq!(sel.prev(), files[2].as_path());
+    }
+
+    #[test]
+    fn selector_prev_wraps_from_first_to_last_image() {
+        let files = vec![
+            PathBuf::from("/img/a.jpg"),
+            PathBuf::from("/img/b.jpg"),
+            PathBuf::from("/img/c.jpg"),
+        ];
+        let mut sel =
+            ImageSelector::with_last(files.clone(), false, Some(files[0].clone())).unwrap();
+
+        assert_eq!(sel.prev(), files[2].as_path());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod doctor;
 mod engine;
 mod slideshow;
 mod status;
@@ -67,13 +68,20 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    // Resolve and load configuration
     let config_path = resolve_config_path(cli.config.as_deref());
+    let runner = RealCommandRunner;
+
+    if let Command::Doctor = cli.command {
+        let healthy = doctor::run_doctor(&config_path, &runner)?;
+        if !healthy {
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
+
     let config = load_config(&config_path)?;
 
     tracing::debug!(?config, "Effective configuration");
-
-    let runner = RealCommandRunner;
 
     match cli.command {
         Command::Daemon => {
@@ -90,6 +98,7 @@ async fn main() -> Result<()> {
             let report = status::render_status(&config_path, &config, &runner);
             print!("{report}");
         }
+        Command::Doctor => unreachable!("handled before config load"),
         Command::Set { ref path } => {
             let abs = validate_set_path(path)?;
 

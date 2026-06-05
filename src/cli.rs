@@ -30,6 +30,9 @@ pub enum Command {
     #[command(about = "Show the effective configuration and current wallpaper state")]
     Status,
 
+    #[command(about = "Run non-mutating diagnostics for config and runtime dependencies")]
+    Doctor,
+
     /// Immediately set a specific wallpaper and extract colors
     Set {
         /// Path to the wallpaper image file
@@ -67,6 +70,7 @@ mod tests {
         assert!(output.contains("daemon"));
         assert!(output.contains("set"));
         assert!(output.contains("status"));
+        assert!(output.contains("doctor"));
         assert!(output.contains("next"));
         assert!(output.contains("prev"));
         assert!(output.contains("completions"));
@@ -76,6 +80,12 @@ mod tests {
     fn status_command_parses() {
         let cli = Cli::try_parse_from(["temad", "status"]).expect("status should parse");
         assert!(matches!(cli.command, Command::Status));
+    }
+
+    #[test]
+    fn doctor_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "doctor"]).expect("doctor should parse");
+        assert!(matches!(cli.command, Command::Doctor));
     }
 
     #[test]

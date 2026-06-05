@@ -15,6 +15,7 @@
 - [x] `temad prev` upgraded to use bounded real history in random mode.
 - [x] Rust CI workflow added for `fmt`, `clippy`, and `test`.
 - [x] `temad status` added for non-mutating runtime/config inspection.
+- [x] `temad doctor` added for config, dependency, wallpaper directory, and daemon diagnostics.
 
 ## In Progress
 
@@ -22,7 +23,6 @@
 
 ## Planned Next
 
-- [ ] Add `temad doctor` for dependency, config, and daemon diagnostics.
 - [ ] Add file locking plus atomic writes for persisted history state.
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
 - [ ] Make history inspection user-facing via `temad history` or equivalent.

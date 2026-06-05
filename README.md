@@ -17,6 +17,7 @@ Built for **Wayland** environments — specifically targeting compositors like [
 - **Slideshow Daemon** — Background daemon with configurable interval, random or sequential image cycling, and no-repeat guarantee.
 - **One-Shot Mode** — Immediately set a specific wallpaper and apply the full theme pipeline.
 - **Status Inspection** — Print the effective configuration, wallpaper directory health, state file, and current wallpaper summary without changing anything.
+- **Doctor Diagnostics** — Verify config loading, backend binaries, wallpaper directory readiness, and daemon health without mutating your theme state.
 - **Next/Previous Wallpaper Mode** — Move through wallpapers on demand using your configured random/sequential behavior with a tiny bounded history state.
 
 ---
@@ -249,6 +250,14 @@ temad status
 
 This prints the effective config path, whether defaults are in use, wallpaper directory health, slideshow mode, configured backends, `swww-daemon` availability when relevant, and a summary of the persisted history state including the current wallpaper when known.
 
+### Run Diagnostics
+
+```bash
+temad doctor
+```
+
+This runs non-mutating diagnostics for the resolved config path, wallpaper directory, selected backend binaries, and `swww-daemon` runtime state. It reports `OK`, `WARN`, and `FAIL` lines and exits non-zero only when required checks fail.
+
 ### Apply the Next Wallpaper
 
 ```bash
@@ -273,6 +282,7 @@ Usage: temad [OPTIONS] <COMMAND>
 Commands:
   daemon       Start the background slideshow daemon
   status       Show the effective configuration and current wallpaper state
+  doctor       Run non-mutating diagnostics for config and runtime dependencies
   set          Immediately set a specific wallpaper and extract colors
   next         Apply the next wallpaper from the configured directory
   prev         Apply the previous wallpaper from the configured directory
@@ -346,6 +356,7 @@ src/
 ├── main.rs        # Entry point, CLI dispatch, logging init
 ├── cli.rs         # clap-based CLI definition
 ├── config.rs      # TOML configuration parsing & defaults
+├── doctor.rs      # Non-mutating config and dependency diagnostics
 ├── engine.rs      # Color/wallpaper backends, hooks, CommandRunner trait
 ├── status.rs      # Non-mutating status reporting
 └── slideshow.rs   # Image discovery, selection, daemon loop
@@ -355,10 +366,11 @@ src/
 
 ## Testing
 
-The project includes **96 unit and integration tests** covering:
+The project includes **109 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)
+- Diagnostic reporting for config, dependencies, and daemon health
 - Image discovery and filtering
 - Status reporting and persisted state inspection
 - Sequential and random image selection (no-repeat guarantee)

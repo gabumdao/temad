@@ -1,4 +1,6 @@
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::{generate, Generator, Shell};
+use std::io;
 use std::path::PathBuf;
 
 /// temad — A lightweight Dynamic Theme and Wallpaper Manager
@@ -30,4 +32,31 @@ pub enum Command {
         /// Path to the wallpaper image file
         path: PathBuf,
     },
+
+    /// Generate shell completion scripts
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
+}
+
+pub fn generate_completions<G: Generator>(generator: G, buf: &mut dyn io::Write) {
+    generate(generator, &mut Cli::command(), "temad", buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bash_completions_include_existing_commands() {
+        let mut buf = Vec::new();
+        generate_completions(Shell::Bash, &mut buf);
+        let output = String::from_utf8(buf).expect("valid UTF-8 completion output");
+
+        assert!(output.contains("temad"));
+        assert!(output.contains("daemon"));
+        assert!(output.contains("set"));
+        assert!(output.contains("completions"));
+    }
 }

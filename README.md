@@ -81,6 +81,26 @@ temad --version
 cargo install --path .
 ```
 
+### Shell Completions
+
+Generate completions to stdout and install them into your shell's completion directory:
+
+```bash
+# Bash
+mkdir -p ~/.local/share/bash-completion/completions
+temad completions bash > ~/.local/share/bash-completion/completions/temad
+
+# Zsh
+mkdir -p ~/.zfunc
+temad completions zsh > ~/.zfunc/_temad
+
+# Fish
+mkdir -p ~/.config/fish/completions
+temad completions fish > ~/.config/fish/completions/temad.fish
+```
+
+Reload your shell or start a new session after installing completions.
+
 ---
 
 ## Configuration
@@ -225,9 +245,10 @@ This immediately runs the full pipeline (color extraction → wallpaper → hook
 Usage: temad [OPTIONS] <COMMAND>
 
 Commands:
-  daemon  Start the background slideshow daemon
-  set     Immediately set a specific wallpaper and extract colors
-  help    Print this message or the help of the given subcommand(s)
+  daemon       Start the background slideshow daemon
+  set          Immediately set a specific wallpaper and extract colors
+  completions  Generate shell completion scripts
+  help         Print this message or the help of the given subcommand(s)
 
 Options:
   -c, --config <CONFIG>  Path to a custom configuration file

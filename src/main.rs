@@ -5,6 +5,7 @@ mod slideshow;
 
 use anyhow::{bail, Result};
 use clap::Parser;
+use std::io;
 use std::path::{Path, PathBuf};
 use tracing_subscriber::EnvFilter;
 
@@ -60,6 +61,11 @@ async fn main() -> Result<()> {
 
     init_logging(cli.verbose);
 
+    if let Command::Completions { shell } = cli.command {
+        cli::generate_completions(shell, &mut io::stdout());
+        return Ok(());
+    }
+
     // Resolve and load configuration
     let config_path = resolve_config_path(cli.config.as_deref());
     let config = load_config(&config_path)?;
@@ -86,6 +92,7 @@ async fn main() -> Result<()> {
             let engine = Engine::new(&config, &runner);
             engine.apply(&abs)?;
         }
+        Command::Completions { .. } => unreachable!("handled before config load"),
     }
 
     Ok(())

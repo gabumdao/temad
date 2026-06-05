@@ -6,6 +6,7 @@ description = "A lightweight, highly efficient Dynamic Theme and Wallpaper Manag
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 tokio = { version = "1", features = ["full"] }

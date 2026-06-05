@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use rand::seq::SliceRandom;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
@@ -19,6 +20,83 @@ pub(crate) fn is_supported_image_path(path: &Path) -> bool {
             .and_then(|ext| ext.to_str())
             .map(|ext| VALID_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
             .unwrap_or(false)
+}
+
+fn last_image_state_path() -> PathBuf {
+    let state_root = dirs::state_dir()
+        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    state_root.join("temad").join("last_image")
+}
+
+fn encode_last_image(wall_dir: &Path, image: &Path) -> String {
+    let value = image
+        .strip_prefix(wall_dir)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| image.to_path_buf());
+
+    format!("{}\n", value.display())
+}
+
+fn decode_last_image(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return None;
+    }
+
+    let path = PathBuf::from(value);
+    Some(if path.is_absolute() {
+        path
+    } else {
+        wall_dir.join(path)
+    })
+}
+
+fn load_last_image_from(state_path: &Path, wall_dir: &Path) -> Result<Option<PathBuf>> {
+    if !state_path.exists() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(state_path).with_context(|| {
+        format!(
+            "Failed to read last wallpaper state: {}",
+            state_path.display()
+        )
+    })?;
+    Ok(decode_last_image(wall_dir, &raw))
+}
+
+fn persist_last_image_to(state_path: &Path, wall_dir: &Path, image: &Path) -> Result<()> {
+    let encoded = encode_last_image(wall_dir, image);
+
+    if fs::read_to_string(state_path).ok().as_deref() == Some(encoded.as_str()) {
+        return Ok(());
+    }
+
+    if let Some(parent) = state_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create wallpaper state directory: {}",
+                parent.display()
+            )
+        })?;
+    }
+
+    fs::write(state_path, encoded).with_context(|| {
+        format!(
+            "Failed to write last wallpaper state: {}",
+            state_path.display()
+        )
+    })
+}
+
+pub fn load_last_image(wall_dir: &Path) -> Result<Option<PathBuf>> {
+    load_last_image_from(&last_image_state_path(), wall_dir)
+}
+
+pub fn persist_last_image(wall_dir: &Path, image: &Path) -> Result<()> {
+    persist_last_image_to(&last_image_state_path(), wall_dir, image)
 }
 
 /// Scan `directory` and return all files with a valid image extension.
@@ -64,13 +142,20 @@ pub struct ImageSelector {
 impl ImageSelector {
     /// Create a new selector.  The image list must not be empty.
     pub fn new(images: Vec<PathBuf>, randomize: bool) -> Result<Self> {
+        Self::with_last(images, randomize, None)
+    }
+
+    pub fn with_last(images: Vec<PathBuf>, randomize: bool, last: Option<PathBuf>) -> Result<Self> {
         if images.is_empty() {
             bail!("No wallpaper images found in the configured directory");
         }
+
+        let last = last.filter(|candidate| images.iter().any(|path| path == candidate));
+
         Ok(Self {
             images,
             randomize,
-            last: None,
+            last,
         })
     }
 
@@ -148,17 +233,17 @@ pub fn run_daemon_cycle<R: CommandRunner>(
     wall_dir: &Path,
     selector: &mut ImageSelector,
     engine: &Engine<R>,
-) {
+) -> Option<PathBuf> {
     match discover_images(wall_dir) {
         Ok(images) => {
             if let Err(e) = selector.update_images(images) {
                 tracing::warn!(error = %e, dir = %wall_dir.display(), "No wallpapers available; skipping cycle");
-                return;
+                return None;
             }
         }
         Err(e) => {
             tracing::warn!(error = %e, dir = %wall_dir.display(), "Failed to refresh wallpaper directory; skipping cycle");
-            return;
+            return None;
         }
     }
 
@@ -167,10 +252,36 @@ pub fn run_daemon_cycle<R: CommandRunner>(
 
     if let Err(e) = engine.apply(&image) {
         tracing::error!(error = %e, image = %image.display(), "Failed to apply theme");
+        return None;
     }
+
+    Some(image)
 }
 
 /// Run the slideshow daemon loop until the process is killed.
+pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
+    let wall_dir = config.wallpaper_dir();
+    let images = discover_images(&wall_dir)?;
+    let last = load_last_image(&wall_dir).map_err(|error| {
+        tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
+        error
+    }).ok().flatten();
+    let mut selector = match last {
+        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
+        None => ImageSelector::new(images, config.slideshow.randomize)?,
+    };
+    let image = selector.next().to_path_buf();
+    let engine = Engine::new(config, runner);
+
+    tracing::info!(image = %image.display(), "Applying next wallpaper");
+    engine.apply(&image)?;
+    if let Err(error) = persist_last_image(&wall_dir, &image) {
+        tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
+    }
+
+    Ok(image)
+}
+
 pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result<()> {
     let wall_dir = config.wallpaper_dir();
     let images = discover_images(&wall_dir)?;
@@ -181,12 +292,27 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
         "Image pool ready"
     );
 
-    let mut selector = ImageSelector::new(images, config.slideshow.randomize)?;
+    let last = match load_last_image(&wall_dir) {
+        Ok(last) => last,
+        Err(error) => {
+            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load last wallpaper state");
+            None
+        }
+    };
+
+    let mut selector = match last {
+        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
+        None => ImageSelector::new(images, config.slideshow.randomize)?,
+    };
     let engine = Engine::new(config, runner);
     let interval = std::time::Duration::from_secs(config.slideshow.interval_seconds);
 
     loop {
-        run_daemon_cycle(&wall_dir, &mut selector, &engine);
+        if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
+            if let Err(error) = persist_last_image(&wall_dir, &image) {
+                tracing::warn!(error = %error, path = %image.display(), "Failed to persist last wallpaper state");
+            }
+        }
 
         tracing::debug!(seconds = config.slideshow.interval_seconds, "Sleeping");
         tokio::time::sleep(interval).await;
@@ -324,9 +450,10 @@ mod tests {
         let runner = RecordingRunner::new(true);
         let engine = Engine::new(&config, &runner);
 
-        run_daemon_cycle(dir.path(), &mut selector, &engine);
+        let applied = run_daemon_cycle(dir.path(), &mut selector, &engine);
 
         let invocations = runner.invocations();
+        assert_eq!(applied, Some(dir.path().join("a.jpg")));
         let expected = dir.path().join("a.jpg").display().to_string();
         assert_eq!(invocations.len(), 1);
         assert_eq!(invocations[0].program, "wbg");
@@ -349,8 +476,9 @@ mod tests {
         let runner = RecordingRunner::new(true);
         let engine = Engine::new(&config, &runner);
 
-        run_daemon_cycle(dir.path(), &mut selector, &engine);
+        let applied = run_daemon_cycle(dir.path(), &mut selector, &engine);
 
+        assert!(applied.is_none());
         assert!(runner.invocations().is_empty());
     }
 
@@ -368,8 +496,9 @@ mod tests {
         };
         let engine = Engine::new(&config, &FailingApplyRunner);
 
-        run_daemon_cycle(dir.path(), &mut selector, &engine);
+        let applied = run_daemon_cycle(dir.path(), &mut selector, &engine);
 
+        assert!(applied.is_none());
         let expected = dir.path().join("a.jpg");
         assert_eq!(selector.next(), expected.as_path());
     }
@@ -399,9 +528,10 @@ mod tests {
         let runner = RecordingRunner::new(true);
         let engine = Engine::new(&config, &runner);
 
-        run_daemon_cycle(dir.path(), &mut selector, &engine);
+        let applied = run_daemon_cycle(dir.path(), &mut selector, &engine);
 
         let invocations = runner.invocations();
+        assert_eq!(applied, Some(dir.path().join("a.jpg")));
         assert_eq!(invocations.len(), 1);
         assert_eq!(invocations[0].program, "swww");
         assert_eq!(
@@ -506,6 +636,60 @@ mod tests {
             }
             prev = Some(picked);
         }
+    }
+
+    #[test]
+    fn selector_with_last_advances_sequentially() {
+        let files = vec![
+            PathBuf::from("/img/a.jpg"),
+            PathBuf::from("/img/b.jpg"),
+            PathBuf::from("/img/c.jpg"),
+        ];
+        let mut sel =
+            ImageSelector::with_last(files.clone(), false, Some(files[1].clone())).unwrap();
+
+        assert_eq!(sel.next(), files[2].as_path());
+    }
+
+    #[test]
+    fn selector_with_missing_last_starts_from_first_image() {
+        let files = vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")];
+        let mut sel = ImageSelector::with_last(
+            files.clone(),
+            false,
+            Some(PathBuf::from("/img/missing.jpg")),
+        )
+        .unwrap();
+
+        assert_eq!(sel.next(), files[0].as_path());
+    }
+
+    #[test]
+    fn selector_random_with_last_avoids_repeating_persisted_image() {
+        let files = vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")];
+        let mut sel =
+            ImageSelector::with_last(files.clone(), true, Some(files[0].clone())).unwrap();
+
+        assert_eq!(sel.next(), files[1].as_path());
+    }
+
+    #[test]
+    fn persist_and_load_last_image_round_trip_relative_path() {
+        let dir = make_test_dir(&["a.jpg", "b.jpg"]);
+        let state_dir = tempfile::tempdir().expect("tempdir");
+        let state_path = state_dir.path().join("last_image");
+        let image = dir.path().join("b.jpg");
+
+        persist_last_image_to(&state_path, dir.path(), &image).expect("persist state");
+        let raw = fs::read_to_string(&state_path).expect("read state file");
+        assert_eq!(
+            raw,
+            "b.jpg
+"
+        );
+
+        let loaded = load_last_image_from(&state_path, dir.path()).expect("load state");
+        assert_eq!(loaded, Some(image));
     }
 
     #[test]

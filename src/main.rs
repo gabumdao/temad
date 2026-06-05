@@ -91,6 +91,13 @@ async fn main() -> Result<()> {
             tracing::info!(path = %abs.display(), "Setting wallpaper");
             let engine = Engine::new(&config, &runner);
             engine.apply(&abs)?;
+            if let Err(error) = slideshow::persist_last_image(&config.wallpaper_dir(), &abs) {
+                tracing::warn!(error = %error, path = %abs.display(), "Failed to persist last wallpaper state");
+            }
+        }
+        Command::Next => {
+            let image = slideshow::run_next(&config, &runner)?;
+            tracing::info!(path = %image.display(), "Applied next wallpaper");
         }
         Command::Completions { .. } => unreachable!("handled before config load"),
     }

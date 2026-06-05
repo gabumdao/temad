@@ -33,6 +33,9 @@ pub enum Command {
         path: PathBuf,
     },
 
+    /// Apply the next wallpaper from the configured directory
+    Next,
+
     /// Generate shell completion scripts
     Completions {
         /// Shell to generate completions for
@@ -57,6 +60,13 @@ mod tests {
         assert!(output.contains("temad"));
         assert!(output.contains("daemon"));
         assert!(output.contains("set"));
+        assert!(output.contains("next"));
         assert!(output.contains("completions"));
+    }
+
+    #[test]
+    fn next_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "next"]).expect("next should parse");
+        assert!(matches!(cli.command, Command::Next));
     }
 }

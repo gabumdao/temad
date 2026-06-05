@@ -16,6 +16,7 @@ Built for **Wayland** environments — specifically targeting compositors like [
 - **Wallust Variable Sourcing** — When using `wallust`, hook commands automatically have access to color variables like `$color2`, `$background`, `$foreground`, etc.
 - **Slideshow Daemon** — Background daemon with configurable interval, random or sequential image cycling, and no-repeat guarantee.
 - **One-Shot Mode** — Immediately set a specific wallpaper and apply the full theme pipeline.
+- **Next Wallpaper Mode** — Advance to the next wallpaper using your configured random/sequential behavior with tiny persisted state.
 
 ---
 
@@ -239,6 +240,14 @@ temad set ~/Pictures/Wallpapers/sunset.jpg
 
 This immediately runs the full pipeline (color extraction → wallpaper → hooks) for the specified image and exits. The path must exist, point to a file, and use a supported image extension (`.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif`).
 
+### Apply the Next Wallpaper
+
+```bash
+temad next
+```
+
+This selects and applies one wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it advances from the last successfully applied image; in random mode it avoids immediately repeating the last applied image when possible. `temad` persists only the last applied image path in a tiny XDG state file so the command stays consistent across runs without heavy disk writes.
+
 ### CLI Options
 
 ```
@@ -247,6 +256,7 @@ Usage: temad [OPTIONS] <COMMAND>
 Commands:
   daemon       Start the background slideshow daemon
   set          Immediately set a specific wallpaper and extract colors
+  next         Apply the next wallpaper from the configured directory
   completions  Generate shell completion scripts
   help         Print this message or the help of the given subcommand(s)
 

@@ -27,6 +27,9 @@ pub enum Command {
     /// Start the background slideshow daemon
     Daemon,
 
+    #[command(about = "Show the effective configuration and current wallpaper state")]
+    Status,
+
     /// Immediately set a specific wallpaper and extract colors
     Set {
         /// Path to the wallpaper image file
@@ -63,9 +66,16 @@ mod tests {
         assert!(output.contains("temad"));
         assert!(output.contains("daemon"));
         assert!(output.contains("set"));
+        assert!(output.contains("status"));
         assert!(output.contains("next"));
         assert!(output.contains("prev"));
         assert!(output.contains("completions"));
+    }
+
+    #[test]
+    fn status_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "status"]).expect("status should parse");
+        assert!(matches!(cli.command, Command::Status));
     }
 
     #[test]

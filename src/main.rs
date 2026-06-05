@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod engine;
 mod slideshow;
+mod status;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -84,6 +85,10 @@ async fn main() -> Result<()> {
                 "Slideshow configuration"
             );
             slideshow::run_daemon(&config, &runner).await?;
+        }
+        Command::Status => {
+            let report = status::render_status(&config_path, &config, &runner);
+            print!("{report}");
         }
         Command::Set { ref path } => {
             let abs = validate_set_path(path)?;

@@ -16,6 +16,7 @@ Built for **Wayland** environments — specifically targeting compositors like [
 - **Wallust Variable Sourcing** — When using `wallust`, hook commands automatically have access to color variables like `$color2`, `$background`, `$foreground`, etc.
 - **Slideshow Daemon** — Background daemon with configurable interval, random or sequential image cycling, and no-repeat guarantee.
 - **One-Shot Mode** — Immediately set a specific wallpaper and apply the full theme pipeline.
+- **Status Inspection** — Print the effective configuration, wallpaper directory health, state file, and current wallpaper summary without changing anything.
 - **Next/Previous Wallpaper Mode** — Move through wallpapers on demand using your configured random/sequential behavior with a tiny bounded history state.
 
 ---
@@ -240,6 +241,14 @@ temad set ~/Pictures/Wallpapers/sunset.jpg
 
 This immediately runs the full pipeline (color extraction → wallpaper → hooks) for the specified image and exits. The path must exist, point to a file, and use a supported image extension (`.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif`).
 
+### Inspect Current Status
+
+```bash
+temad status
+```
+
+This prints the effective config path, whether defaults are in use, wallpaper directory health, slideshow mode, configured backends, `swww-daemon` availability when relevant, and a summary of the persisted history state including the current wallpaper when known.
+
 ### Apply the Next Wallpaper
 
 ```bash
@@ -263,6 +272,7 @@ Usage: temad [OPTIONS] <COMMAND>
 
 Commands:
   daemon       Start the background slideshow daemon
+  status       Show the effective configuration and current wallpaper state
   set          Immediately set a specific wallpaper and extract colors
   next         Apply the next wallpaper from the configured directory
   prev         Apply the previous wallpaper from the configured directory
@@ -337,6 +347,7 @@ src/
 ├── cli.rs         # clap-based CLI definition
 ├── config.rs      # TOML configuration parsing & defaults
 ├── engine.rs      # Color/wallpaper backends, hooks, CommandRunner trait
+├── status.rs      # Non-mutating status reporting
 └── slideshow.rs   # Image discovery, selection, daemon loop
 ```
 
@@ -344,11 +355,12 @@ src/
 
 ## Testing
 
-The project includes **71 unit and integration tests** covering:
+The project includes **96 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)
 - Image discovery and filtering
+- Status reporting and persisted state inspection
 - Sequential and random image selection (no-repeat guarantee)
 - Command generation for all backend combinations
 - Hook formatting and `colors.sh` sourcing

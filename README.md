@@ -127,6 +127,7 @@ wallpaper = "swww"
 transition_type = "random"
 transition_step = 100
 transition_fps = 60
+transition_duration = 2
 
 [hooks]
 # Shell commands executed AFTER colors and wallpaper are applied.
@@ -172,6 +173,7 @@ Only used when `wallpaper = "swww"`. These are passed directly to `swww img`.
 | `transition_type` | String | `random` | Transition animation type (see `swww img --help`). |
 | `transition_step` | Integer | `100` | Speed of the transition (higher = faster). |
 | `transition_fps` | Integer | `60` | Frames per second for the transition animation. |
+| `transition_duration` | Integer | unset | Optional transition duration passed to `swww img`. |
 
 #### `[hooks]`
 
@@ -302,7 +304,7 @@ src/
 
 ## Testing
 
-The project includes **65 unit and integration tests** covering:
+The project includes **71 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)

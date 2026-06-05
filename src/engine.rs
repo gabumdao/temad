@@ -134,22 +134,26 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
         }
 
         let opts = &self.config.swww_options;
-        let step = opts.transition_step.to_string();
-        let fps = opts.transition_fps.to_string();
-
-        let args: Vec<&str> = vec![
-            "img",
-            path,
-            "--transition-type",
-            &opts.transition_type,
-            "--transition-step",
-            &step,
-            "--transition-fps",
-            &fps,
+        let mut args = vec![
+            "img".to_string(),
+            path.to_string(),
+            "--transition-type".to_string(),
+            opts.transition_type.clone(),
+            "--transition-step".to_string(),
+            opts.transition_step.to_string(),
+            "--transition-fps".to_string(),
+            opts.transition_fps.to_string(),
         ];
 
+        if let Some(duration) = opts.transition_duration {
+            args.push("--transition-duration".to_string());
+            args.push(duration.to_string());
+        }
+
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+
         tracing::info!(backend = "swww", "Setting wallpaper");
-        let output = self.runner.run("swww", &args)?;
+        let output = self.runner.run("swww", &arg_refs)?;
         check_output("swww img", &output)?;
         Ok(())
     }
@@ -158,7 +162,9 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
         tracing::info!(backend = "hyprpaper", "Setting wallpaper");
 
         // Preload the image
-        let output = self.runner.run("hyprctl", &["hyprpaper", "preload", path])?;
+        let output = self
+            .runner
+            .run("hyprctl", &["hyprpaper", "preload", path])?;
         check_output("hyprpaper preload", &output)?;
 
         // Set the wallpaper on all monitors
@@ -217,9 +223,7 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
             ColorBackend::Wallust => {
                 let colors_sh = crate::config::expand_tilde("~/.cache/wallust/colors.sh");
                 let colors_path = colors_sh.display();
-                format!(
-                    "if [ -f \"{colors_path}\" ]; then . \"{colors_path}\"; fi; {hook}"
-                )
+                format!("if [ -f \"{colors_path}\" ]; then . \"{colors_path}\"; fi; {hook}")
             }
             _ => hook.to_string(),
         }
@@ -404,6 +408,7 @@ mod tests {
                 transition_type: "fade".to_string(),
                 transition_step: 50,
                 transition_fps: 30,
+                transition_duration: None,
             },
             ..Default::default()
         };
@@ -477,10 +482,16 @@ mod tests {
         assert_eq!(invocations.len(), 2);
         assert_eq!(invocations[0].program, "hyprctl");
         assert!(!invocations[0].is_shell);
-        assert_eq!(invocations[0].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
+        assert_eq!(
+            invocations[0].args,
+            vec!["hyprpaper", "preload", "/tmp/wall.png"]
+        );
         assert_eq!(invocations[1].program, "hyprctl");
         assert!(!invocations[1].is_shell);
-        assert_eq!(invocations[1].args, vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]);
+        assert_eq!(
+            invocations[1].args,
+            vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]
+        );
     }
 
     #[test]
@@ -750,10 +761,16 @@ mod tests {
         assert_eq!(invocations[0].args, vec!["image", "/tmp/wall.png"]);
         assert_eq!(invocations[1].program, "hyprctl");
         assert!(!invocations[1].is_shell);
-        assert_eq!(invocations[1].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
+        assert_eq!(
+            invocations[1].args,
+            vec!["hyprpaper", "preload", "/tmp/wall.png"]
+        );
         assert_eq!(invocations[2].program, "hyprctl");
         assert!(!invocations[2].is_shell);
-        assert_eq!(invocations[2].args, vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]);
+        assert_eq!(
+            invocations[2].args,
+            vec!["hyprpaper", "wallpaper", ",/tmp/wall.png"]
+        );
         // Hook should NOT source colors.sh (matugen, not wallust)
         assert_eq!(invocations[3].args[1], "swaync-client -rs");
     }
@@ -822,7 +839,8 @@ mod tests {
         let runner = MockRunner::new(true);
         let engine = Engine::new(&config, &runner);
 
-        let cmd = engine.build_hook_command("hyprctl keyword general:col.active_border 'rgba(${color2:1}ff)'");
+        let cmd = engine
+            .build_hook_command("hyprctl keyword general:col.active_border 'rgba(${color2:1}ff)'");
 
         // Must contain the conditional source
         assert!(cmd.contains("if [ -f"));
@@ -846,7 +864,10 @@ mod tests {
         let engine = Engine::new(&config, &runner);
 
         let cmd = engine.build_hook_command("echo test");
-        assert_eq!(cmd, "echo test", "matugen hooks must pass through unchanged");
+        assert_eq!(
+            cmd, "echo test",
+            "matugen hooks must pass through unchanged"
+        );
     }
 
     #[test]
@@ -917,17 +938,65 @@ mod tests {
         assert!(!invocations[0].is_shell);
         assert_eq!(
             invocations[0].args,
-            vec!["hyprpaper", "preload", "/home/user/My Pictures/wall paper.jpg"]
+            vec![
+                "hyprpaper",
+                "preload",
+                "/home/user/My Pictures/wall paper.jpg"
+            ]
         );
         assert_eq!(invocations[1].program, "hyprctl");
         assert!(!invocations[1].is_shell);
         assert_eq!(
             invocations[1].args,
-            vec!["hyprpaper", "wallpaper", ",/home/user/My Pictures/wall paper.jpg"]
+            vec![
+                "hyprpaper",
+                "wallpaper",
+                ",/home/user/My Pictures/wall paper.jpg"
+            ]
         );
     }
 
     // -- swww with default options --------------------------------------------
+
+    #[test]
+    fn swww_includes_transition_duration_when_configured() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Swww,
+                ..Default::default()
+            },
+            swww_options: SwwwOptions {
+                transition_type: "fade".to_string(),
+                transition_step: 50,
+                transition_fps: 30,
+                transition_duration: Some(2),
+            },
+            ..Default::default()
+        };
+        let runner = MockRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        engine
+            .apply_wallpaper("/tmp/wall.png")
+            .expect("should succeed");
+
+        let invocations = runner.invocations();
+        assert_eq!(
+            invocations[0].args,
+            vec![
+                "img",
+                "/tmp/wall.png",
+                "--transition-type",
+                "fade",
+                "--transition-step",
+                "50",
+                "--transition-fps",
+                "30",
+                "--transition-duration",
+                "2"
+            ]
+        );
+    }
 
     #[test]
     fn swww_with_default_options() {
@@ -1015,7 +1084,7 @@ mod tests {
         fn run_shell(&self, _cmd: &str) -> Result<Output> {
             let mut count = self.call_count.lock().unwrap();
             *count += 1;
-            if *count % 2 == 0 {
+            if (*count).is_multiple_of(2) {
                 Ok(mock_failure("intentional failure"))
             } else {
                 Ok(mock_success())
@@ -1035,9 +1104,9 @@ mod tests {
             },
             hooks: HooksConfig {
                 post_update: vec![
-                    "echo first".to_string(),   // succeeds (call 1)
-                    "echo second".to_string(),  // fails (call 2)
-                    "echo third".to_string(),   // succeeds (call 3)
+                    "echo first".to_string(),  // succeeds (call 1)
+                    "echo second".to_string(), // fails (call 2)
+                    "echo third".to_string(),  // succeeds (call 3)
                 ],
             },
             ..Default::default()
@@ -1046,7 +1115,9 @@ mod tests {
         let engine = Engine::new(&config, &runner);
 
         // Should NOT error — non-zero hooks are warned but don't abort
-        engine.run_hooks().expect("hooks should not abort on non-zero exit");
+        engine
+            .run_hooks()
+            .expect("hooks should not abort on non-zero exit");
 
         let count = *runner.call_count.lock().unwrap();
         assert_eq!(count, 3, "all 3 hooks must execute even if one fails");

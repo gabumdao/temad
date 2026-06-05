@@ -7,24 +7,13 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 /// Root configuration structure mapping to `~/.config/temad/config.toml`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct Config {
     pub slideshow: SlideshowConfig,
     pub backends: BackendsConfig,
     pub swww_options: SwwwOptions,
     pub hooks: HooksConfig,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            slideshow: SlideshowConfig::default(),
-            backends: BackendsConfig::default(),
-            swww_options: SwwwOptions::default(),
-            hooks: HooksConfig::default(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -107,6 +96,7 @@ pub struct SwwwOptions {
     pub transition_type: String,
     pub transition_step: u32,
     pub transition_fps: u32,
+    pub transition_duration: Option<u32>,
 }
 
 impl Default for SwwwOptions {
@@ -115,6 +105,7 @@ impl Default for SwwwOptions {
             transition_type: "random".to_string(),
             transition_step: 100,
             transition_fps: 60,
+            transition_duration: None,
         }
     }
 }
@@ -123,19 +114,11 @@ impl Default for SwwwOptions {
 // Hooks
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
 pub struct HooksConfig {
     /// Shell commands executed AFTER colors and wallpaper are applied.
     pub post_update: Vec<String>,
-}
-
-impl Default for HooksConfig {
-    fn default() -> Self {
-        Self {
-            post_update: Vec::new(),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +246,7 @@ wallpaper = "hyprpaper"
 transition_type = "fade"
 transition_step = 50
 transition_fps = 30
+transition_duration = 2
 
 [hooks]
 post_update = [
@@ -283,6 +267,7 @@ post_update = [
         assert_eq!(config.swww_options.transition_type, "fade");
         assert_eq!(config.swww_options.transition_step, 50);
         assert_eq!(config.swww_options.transition_fps, 30);
+        assert_eq!(config.swww_options.transition_duration, Some(2));
 
         assert_eq!(config.hooks.post_update.len(), 2);
         assert_eq!(config.hooks.post_update[0], "echo hello");
@@ -493,6 +478,7 @@ interval_seconds = 1
         assert_eq!(opts.transition_type, "random");
         assert_eq!(opts.transition_step, 100);
         assert_eq!(opts.transition_fps, 60);
+        assert_eq!(opts.transition_duration, None);
     }
 
     #[test]
@@ -506,6 +492,17 @@ transition_type = "wipe"
         // Defaults preserved for the rest
         assert_eq!(config.swww_options.transition_step, 100);
         assert_eq!(config.swww_options.transition_fps, 60);
+        assert_eq!(config.swww_options.transition_duration, None);
+    }
+
+    #[test]
+    fn swww_options_transition_duration_override() {
+        let toml_str = r#"
+[swww_options]
+transition_duration = 2
+"#;
+        let config: Config = toml::from_str(toml_str).expect("valid TOML");
+        assert_eq!(config.swww_options.transition_duration, Some(2));
     }
 
     // -- Hooks with special characters ----------------------------------------

@@ -142,6 +142,32 @@ impl ImageSelector {
 // Daemon loop
 // ===========================================================================
 
+pub fn run_daemon_cycle<R: CommandRunner>(
+    wall_dir: &Path,
+    selector: &mut ImageSelector,
+    engine: &Engine<R>,
+) {
+    match discover_images(wall_dir) {
+        Ok(images) => {
+            if let Err(e) = selector.update_images(images) {
+                tracing::warn!(error = %e, dir = %wall_dir.display(), "No wallpapers available; skipping cycle");
+                return;
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, dir = %wall_dir.display(), "Failed to refresh wallpaper directory; skipping cycle");
+            return;
+        }
+    }
+
+    let image = selector.next().to_path_buf();
+    tracing::info!(image = %image.display(), "Applying wallpaper");
+
+    if let Err(e) = engine.apply(&image) {
+        tracing::error!(error = %e, image = %image.display(), "Failed to apply theme");
+    }
+}
+
 /// Run the slideshow daemon loop until the process is killed.
 pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result<()> {
     let wall_dir = config.wallpaper_dir();
@@ -158,28 +184,7 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
     let interval = std::time::Duration::from_secs(config.slideshow.interval_seconds);
 
     loop {
-        match discover_images(&wall_dir) {
-            Ok(images) => {
-                if let Err(e) = selector.update_images(images) {
-                    tracing::warn!(error = %e, dir = %wall_dir.display(), "No wallpapers available; skipping cycle");
-                    tokio::time::sleep(interval).await;
-                    continue;
-                }
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, dir = %wall_dir.display(), "Failed to refresh wallpaper directory; skipping cycle");
-                tokio::time::sleep(interval).await;
-                continue;
-            }
-        }
-
-        let image = selector.next().to_path_buf();
-        tracing::info!(image = %image.display(), "Applying wallpaper");
-
-        if let Err(e) = engine.apply(&image) {
-            tracing::error!(error = %e, image = %image.display(), "Failed to apply theme");
-            // Continue the loop — don't crash the daemon on a transient failure
-        }
+        run_daemon_cycle(&wall_dir, &mut selector, &engine);
 
         tracing::debug!(seconds = config.slideshow.interval_seconds, "Sleeping");
         tokio::time::sleep(interval).await;
@@ -193,8 +198,104 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{
+        BackendsConfig, ColorBackend, SlideshowConfig, SwwwOptions, WallpaperBackend,
+    };
     use std::collections::HashSet;
     use std::fs;
+    use std::os::unix::process::ExitStatusExt;
+    use std::process::{ExitStatus, Output};
+    use std::sync::Mutex;
+
+    #[derive(Debug)]
+    struct Invocation {
+        program: String,
+        args: Vec<String>,
+        is_shell: bool,
+    }
+
+    struct RecordingRunner {
+        log: Mutex<Vec<Invocation>>,
+        daemon_running: bool,
+    }
+
+    impl RecordingRunner {
+        fn new(daemon_running: bool) -> Self {
+            Self {
+                log: Mutex::new(Vec::new()),
+                daemon_running,
+            }
+        }
+
+        fn invocations(&self) -> Vec<Invocation> {
+            self.log
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|inv| Invocation {
+                    program: inv.program.clone(),
+                    args: inv.args.clone(),
+                    is_shell: inv.is_shell,
+                })
+                .collect()
+        }
+    }
+
+    struct FailingApplyRunner;
+
+    fn mock_success() -> Output {
+        Output {
+            status: ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    fn mock_failure(stderr_msg: &str) -> Output {
+        Output {
+            status: ExitStatus::from_raw(256),
+            stdout: Vec::new(),
+            stderr: stderr_msg.as_bytes().to_vec(),
+        }
+    }
+
+    impl CommandRunner for RecordingRunner {
+        fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+            self.log.lock().unwrap().push(Invocation {
+                program: program.to_string(),
+                args: args.iter().map(|arg| arg.to_string()).collect(),
+                is_shell: false,
+            });
+            Ok(mock_success())
+        }
+
+        fn run_shell(&self, cmd: &str) -> Result<Output> {
+            self.log.lock().unwrap().push(Invocation {
+                program: "sh".to_string(),
+                args: vec!["-c".to_string(), cmd.to_string()],
+                is_shell: true,
+            });
+            Ok(mock_success())
+        }
+
+        fn is_running(&self, _process_name: &str) -> bool {
+            self.daemon_running
+        }
+    }
+
+    impl CommandRunner for FailingApplyRunner {
+        fn run(&self, _program: &str, _args: &[&str]) -> Result<Output> {
+            Ok(mock_failure("intentional wallpaper failure"))
+        }
+
+        fn run_shell(&self, _cmd: &str) -> Result<Output> {
+            Ok(mock_success())
+        }
+
+        fn is_running(&self, _process_name: &str) -> bool {
+            true
+        }
+    }
 
     /// Helper: create a temp directory with some dummy image files.
     fn make_test_dir(files: &[&str]) -> tempfile::TempDir {
@@ -204,6 +305,118 @@ mod tests {
             fs::write(&path, b"fake image data").expect("write test file");
         }
         dir
+    }
+
+    #[test]
+    fn daemon_cycle_applies_next_image_after_refresh() {
+        let dir = make_test_dir(&["a.jpg"]);
+        let images = discover_images(dir.path()).expect("discover initial images");
+        let mut selector = ImageSelector::new(images, false).expect("build selector");
+        let config = Config {
+            backends: BackendsConfig {
+                colors: ColorBackend::None,
+                wallpaper: WallpaperBackend::Wbg,
+            },
+            ..Default::default()
+        };
+        let runner = RecordingRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        run_daemon_cycle(dir.path(), &mut selector, &engine);
+
+        let invocations = runner.invocations();
+        let expected = dir.path().join("a.jpg").display().to_string();
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].program, "wbg");
+        assert_eq!(invocations[0].args, vec![expected]);
+    }
+
+    #[test]
+    fn daemon_cycle_skips_when_refresh_finds_no_images() {
+        let dir = make_test_dir(&["a.jpg"]);
+        let images = discover_images(dir.path()).expect("discover initial images");
+        let mut selector = ImageSelector::new(images, false).expect("build selector");
+        fs::remove_file(dir.path().join("a.jpg")).expect("remove image");
+        let config = Config {
+            backends: BackendsConfig {
+                colors: ColorBackend::None,
+                wallpaper: WallpaperBackend::Wbg,
+            },
+            ..Default::default()
+        };
+        let runner = RecordingRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        run_daemon_cycle(dir.path(), &mut selector, &engine);
+
+        assert!(runner.invocations().is_empty());
+    }
+
+    #[test]
+    fn daemon_cycle_continues_when_engine_apply_fails() {
+        let dir = make_test_dir(&["a.jpg"]);
+        let images = discover_images(dir.path()).expect("discover initial images");
+        let mut selector = ImageSelector::new(images, false).expect("build selector");
+        let config = Config {
+            backends: BackendsConfig {
+                colors: ColorBackend::None,
+                wallpaper: WallpaperBackend::Wbg,
+            },
+            ..Default::default()
+        };
+        let engine = Engine::new(&config, &FailingApplyRunner);
+
+        run_daemon_cycle(dir.path(), &mut selector, &engine);
+
+        let expected = dir.path().join("a.jpg");
+        assert_eq!(selector.next(), expected.as_path());
+    }
+
+    #[test]
+    fn daemon_cycle_uses_swww_transition_duration_when_configured() {
+        let dir = make_test_dir(&["a.jpg"]);
+        let images = discover_images(dir.path()).expect("discover initial images");
+        let mut selector = ImageSelector::new(images, false).expect("build selector");
+        let config = Config {
+            slideshow: SlideshowConfig {
+                directory: dir.path().display().to_string(),
+                ..Default::default()
+            },
+            backends: BackendsConfig {
+                colors: ColorBackend::None,
+                wallpaper: WallpaperBackend::Swww,
+            },
+            swww_options: SwwwOptions {
+                transition_type: "fade".to_string(),
+                transition_step: 50,
+                transition_fps: 30,
+                transition_duration: Some(2),
+            },
+            ..Default::default()
+        };
+        let runner = RecordingRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        run_daemon_cycle(dir.path(), &mut selector, &engine);
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].program, "swww");
+        assert_eq!(
+            invocations[0].args,
+            vec![
+                "img".to_string(),
+                dir.path().join("a.jpg").display().to_string(),
+                "--transition-type".to_string(),
+                "fade".to_string(),
+                "--transition-step".to_string(),
+                "50".to_string(),
+                "--transition-fps".to_string(),
+                "30".to_string(),
+                "--transition-duration".to_string(),
+                "2".to_string(),
+            ]
+        );
     }
 
     // -- discover_images ------------------------------------------------------
@@ -314,8 +527,11 @@ mod tests {
 
         assert_eq!(sel.next(), Path::new("/img/a.jpg"));
 
-        sel.update_images(vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")])
-            .unwrap();
+        sel.update_images(vec![
+            PathBuf::from("/img/a.jpg"),
+            PathBuf::from("/img/b.jpg"),
+        ])
+        .unwrap();
 
         assert_eq!(sel.next(), Path::new("/img/b.jpg"));
     }
@@ -330,7 +546,8 @@ mod tests {
 
         assert_eq!(sel.next(), Path::new("/img/a.jpg"));
 
-        sel.update_images(vec![PathBuf::from("/img/b.jpg")]).unwrap();
+        sel.update_images(vec![PathBuf::from("/img/b.jpg")])
+            .unwrap();
 
         assert_eq!(sel.next(), Path::new("/img/b.jpg"));
     }
@@ -353,20 +570,14 @@ mod tests {
 
     #[test]
     fn selector_two_images_random_always_alternates() {
-        let files = vec![
-            PathBuf::from("/img/a.jpg"),
-            PathBuf::from("/img/b.jpg"),
-        ];
+        let files = vec![PathBuf::from("/img/a.jpg"), PathBuf::from("/img/b.jpg")];
         let mut sel = ImageSelector::new(files, true).unwrap();
 
         let mut prev: Option<PathBuf> = None;
         for _ in 0..50 {
             let picked = sel.next().to_path_buf();
             if let Some(ref p) = prev {
-                assert_ne!(
-                    &picked, p,
-                    "Two-image pool must always alternate"
-                );
+                assert_ne!(&picked, p, "Two-image pool must always alternate");
             }
             prev = Some(picked);
         }
@@ -422,12 +633,7 @@ mod tests {
 
     #[test]
     fn discover_handles_mixed_case_extensions() {
-        let dir = make_test_dir(&[
-            "upper.JPG",
-            "mixed.Png",
-            "weird.JpEg",
-            "normal.webp",
-        ]);
+        let dir = make_test_dir(&["upper.JPG", "mixed.Png", "weird.JpEg", "normal.webp"]);
 
         let images = discover_images(dir.path()).expect("should succeed");
         let names: HashSet<String> = images
@@ -508,19 +714,10 @@ mod tests {
         let mut sel = ImageSelector::new(files.clone(), false).unwrap();
 
         // 3 full cycles = 9 picks
-        let expected: Vec<&Path> = files
-            .iter()
-            .cycle()
-            .take(9)
-            .map(|p| p.as_path())
-            .collect();
+        let expected: Vec<&Path> = files.iter().cycle().take(9).map(|p| p.as_path()).collect();
 
         for (i, exp) in expected.iter().enumerate() {
-            assert_eq!(
-                sel.next(),
-                *exp,
-                "Mismatch at pick {i}"
-            );
+            assert_eq!(sel.next(), *exp, "Mismatch at pick {i}");
         }
     }
 

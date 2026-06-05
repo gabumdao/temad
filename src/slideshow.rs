@@ -12,6 +12,15 @@ use crate::engine::{CommandRunner, Engine};
 /// Valid wallpaper file extensions (lowercase comparison).
 const VALID_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "bmp", "gif"];
 
+pub(crate) fn is_supported_image_path(path: &Path) -> bool {
+    path.is_file()
+        && path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| VALID_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
+            .unwrap_or(false)
+}
+
 /// Scan `directory` and return all files with a valid image extension.
 pub fn discover_images(directory: &Path) -> Result<Vec<PathBuf>> {
     if !directory.is_dir() {
@@ -25,14 +34,7 @@ pub fn discover_images(directory: &Path) -> Result<Vec<PathBuf>> {
         .with_context(|| format!("Failed to read directory: {}", directory.display()))?
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| {
-            path.is_file()
-                && path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .map(|ext| VALID_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-                    .unwrap_or(false)
-        })
+        .filter(|path| is_supported_image_path(path))
         .collect();
 
     // Sort for deterministic ordering before any shuffle

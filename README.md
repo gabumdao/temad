@@ -217,7 +217,7 @@ This starts the background loop that:
 temad set ~/Pictures/Wallpapers/sunset.jpg
 ```
 
-This immediately runs the full pipeline (color extraction → wallpaper → hooks) for the specified image and exits.
+This immediately runs the full pipeline (color extraction → wallpaper → hooks) for the specified image and exits. The path must exist, point to a file, and use a supported image extension (`.jpg`, `.jpeg`, `.png`, `.webp`, `.bmp`, `.gif`).
 
 ### CLI Options
 

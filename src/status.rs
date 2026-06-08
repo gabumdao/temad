@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::config::{ColorBackend, Config, WallpaperBackend};
 use crate::engine::CommandRunner;
-use crate::slideshow::discover_images;
+use crate::slideshow::{discover_images, last_image_state_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HistorySummary {
@@ -92,11 +92,7 @@ fn build_status_report<R: CommandRunner>(
 }
 
 fn history_state_path() -> PathBuf {
-    let state_root = dirs::state_dir()
-        .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    state_root.join("temad").join("last_image")
+    last_image_state_path()
 }
 
 fn read_history_summary(state_path: &Path, wall_dir: &Path) -> HistorySummary {

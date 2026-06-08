@@ -266,6 +266,8 @@ temad next
 
 This selects and applies one wallpaper from the configured directory using `[slideshow].randomize`. In sequential mode it advances from the last successfully applied image; in random mode it avoids immediately repeating the current image when possible. `temad` persists a tiny bounded history in XDG state so `next` and `prev` stay consistent across runs without heavy disk writes.
 
+History persistence is now written atomically and guarded by a lock file so concurrent `set`/`next`/`prev`/`daemon` updates do not leave behind truncated or interleaved state.
+
 ### Apply the Previous Wallpaper
 
 ```bash
@@ -366,12 +368,13 @@ src/
 
 ## Testing
 
-The project includes **109 unit and integration tests** covering:
+The project includes **112 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)
 - Diagnostic reporting for config, dependencies, and daemon health
 - Image discovery and filtering
+- Lock-safe and atomic wallpaper history persistence
 - Status reporting and persisted state inspection
 - Sequential and random image selection (no-repeat guarantee)
 - Command generation for all backend combinations

@@ -1,7 +1,9 @@
 use anyhow::{bail, Context, Result};
 use rand::seq::SliceRandom;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::Config;
 use crate::engine::{CommandRunner, Engine};
@@ -23,8 +25,9 @@ pub(crate) fn is_supported_image_path(path: &Path) -> bool {
 }
 
 const HISTORY_LIMIT: usize = 32;
+static HISTORY_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-fn last_image_state_path() -> PathBuf {
+pub(crate) fn last_image_state_path() -> PathBuf {
     let state_root = dirs::state_dir()
         .or_else(|| dirs::home_dir().map(|home| home.join(".local/state")))
         .unwrap_or_else(|| PathBuf::from("."));
@@ -183,13 +186,52 @@ fn load_history_from(state_path: &Path, wall_dir: &Path) -> Result<HistoryState>
     Ok(decode_history_state(wall_dir, &raw))
 }
 
-fn persist_history_to(state_path: &Path, wall_dir: &Path, state: &HistoryState) -> Result<()> {
-    let encoded = encode_history_state(wall_dir, state);
+fn history_lock_path(state_path: &Path) -> PathBuf {
+    let file_name = state_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("last_image");
+    state_path.with_file_name(format!("{file_name}.lock"))
+}
 
-    if fs::read_to_string(state_path).ok().as_deref() == Some(encoded.as_str()) {
-        return Ok(());
+fn acquire_history_lock(state_path: &Path) -> Result<File> {
+    let lock_path = history_lock_path(state_path);
+    if let Some(parent) = lock_path.parent() {
+        fs::create_dir_all(parent).with_context(|| {
+            format!(
+                "Failed to create history lock directory: {}",
+                parent.display()
+            )
+        })?;
     }
 
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .with_context(|| format!("Failed to open history lock file: {}", lock_path.display()))?;
+
+    file.lock()
+        .with_context(|| format!("Failed to lock history state: {}", lock_path.display()))?;
+    Ok(file)
+}
+
+fn history_temp_path(state_path: &Path) -> PathBuf {
+    let file_name = state_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("last_image");
+    let counter = HISTORY_TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    state_path.with_file_name(format!(
+        ".{file_name}.tmp.{}.{}",
+        std::process::id(),
+        counter
+    ))
+}
+
+fn atomic_write_history(state_path: &Path, encoded: &str) -> Result<()> {
     if let Some(parent) = state_path.parent() {
         fs::create_dir_all(parent).with_context(|| {
             format!(
@@ -199,26 +241,81 @@ fn persist_history_to(state_path: &Path, wall_dir: &Path, state: &HistoryState) 
         })?;
     }
 
-    fs::write(state_path, encoded).with_context(|| {
-        format!(
-            "Failed to write wallpaper history state: {}",
-            state_path.display()
-        )
-    })
+    let temp_path = history_temp_path(state_path);
+    let write_result = (|| -> Result<()> {
+        let mut temp_file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)
+            .with_context(|| {
+                format!(
+                    "Failed to create history temp file: {}",
+                    temp_path.display()
+                )
+            })?;
+        temp_file.write_all(encoded.as_bytes()).with_context(|| {
+            format!("Failed to write history temp file: {}", temp_path.display())
+        })?;
+        temp_file.sync_all().with_context(|| {
+            format!("Failed to sync history temp file: {}", temp_path.display())
+        })?;
+        fs::rename(&temp_path, state_path).with_context(|| {
+            format!(
+                "Failed to atomically replace wallpaper history state: {}",
+                state_path.display()
+            )
+        })?;
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+
+    write_result
+}
+
+fn persist_history_unlocked_to(
+    state_path: &Path,
+    wall_dir: &Path,
+    state: &HistoryState,
+) -> Result<()> {
+    let encoded = encode_history_state(wall_dir, state);
+
+    if fs::read_to_string(state_path).ok().as_deref() == Some(encoded.as_str()) {
+        return Ok(());
+    }
+
+    atomic_write_history(state_path, &encoded)
+}
+
+#[cfg(test)]
+fn persist_history_to(state_path: &Path, wall_dir: &Path, state: &HistoryState) -> Result<()> {
+    let _lock = acquire_history_lock(state_path)?;
+    persist_history_unlocked_to(state_path, wall_dir, state)
+}
+
+fn with_locked_history_from<T, F>(state_path: &Path, wall_dir: &Path, operation: F) -> Result<T>
+where
+    F: FnOnce(&mut HistoryState) -> Result<T>,
+{
+    let _lock = acquire_history_lock(state_path)?;
+    let mut history = load_history_from(state_path, wall_dir)?;
+    let result = operation(&mut history)?;
+    persist_history_unlocked_to(state_path, wall_dir, &history)?;
+    Ok(result)
 }
 
 fn load_history(wall_dir: &Path) -> Result<HistoryState> {
     load_history_from(&last_image_state_path(), wall_dir)
 }
 
-fn persist_history(wall_dir: &Path, state: &HistoryState) -> Result<()> {
-    persist_history_to(&last_image_state_path(), wall_dir, state)
-}
-
 pub fn persist_last_image(wall_dir: &Path, image: &Path) -> Result<()> {
-    let mut state = load_history(wall_dir)?;
-    state.record(image.to_path_buf());
-    persist_history(wall_dir, &state)
+    let state_path = last_image_state_path();
+    with_locked_history_from(&state_path, wall_dir, |state| {
+        state.record(image.to_path_buf());
+        Ok(())
+    })
 }
 
 /// Scan `directory` and return all files with a valid image extension.
@@ -415,73 +512,65 @@ pub fn run_daemon_cycle<R: CommandRunner>(
 pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
     let images = discover_images(&wall_dir)?;
-    let mut history = load_history(&wall_dir)
-        .map_err(|error| {
-            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
-            error
-        })
-        .unwrap_or_default();
+    let state_path = last_image_state_path();
 
     let engine = Engine::new(config, runner);
 
-    if let Some(image) = history.next().cloned() {
-        tracing::info!(image = %image.display(), "Applying next wallpaper from history");
+    with_locked_history_from(&state_path, &wall_dir, |history| {
+        if let Some(image) = history.next().cloned() {
+            tracing::info!(image = %image.display(), "Applying next wallpaper from history");
+            engine.apply(&image)?;
+            history.step_next();
+            return Ok(image);
+        }
+
+        let mut selector = match history.current_cloned() {
+            Some(last) => {
+                ImageSelector::with_last(images.clone(), config.slideshow.randomize, Some(last))?
+            }
+            None => ImageSelector::new(images.clone(), config.slideshow.randomize)?,
+        };
+        let image = selector.next().to_path_buf();
+
+        tracing::info!(image = %image.display(), "Applying next wallpaper");
         engine.apply(&image)?;
-        history.step_next();
-        persist_history(&wall_dir, &history)?;
-        return Ok(image);
-    }
-
-    let mut selector = match history.current_cloned() {
-        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
-        None => ImageSelector::new(images, config.slideshow.randomize)?,
-    };
-    let image = selector.next().to_path_buf();
-
-    tracing::info!(image = %image.display(), "Applying next wallpaper");
-    engine.apply(&image)?;
-    history.record(image.clone());
-    persist_history(&wall_dir, &history)?;
-
-    Ok(image)
+        history.record(image.clone());
+        Ok(image)
+    })
 }
 
 pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
     let images = discover_images(&wall_dir)?;
-    let mut history = load_history(&wall_dir)
-        .map_err(|error| {
-            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
-            error
-        })
-        .unwrap_or_default();
+    let state_path = last_image_state_path();
 
     let engine = Engine::new(config, runner);
 
-    if let Some(image) = history.previous().cloned() {
-        tracing::info!(image = %image.display(), "Applying previous wallpaper from history");
+    with_locked_history_from(&state_path, &wall_dir, |history| {
+        if let Some(image) = history.previous().cloned() {
+            tracing::info!(image = %image.display(), "Applying previous wallpaper from history");
+            engine.apply(&image)?;
+            history.step_prev();
+            return Ok(image);
+        }
+
+        if config.slideshow.randomize {
+            bail!("No previous wallpaper available in history");
+        }
+
+        let mut selector = match history.current_cloned() {
+            Some(last) => {
+                ImageSelector::with_last(images.clone(), config.slideshow.randomize, Some(last))?
+            }
+            None => ImageSelector::new(images.clone(), config.slideshow.randomize)?,
+        };
+        let image = selector.prev().to_path_buf();
+
+        tracing::info!(image = %image.display(), "Applying previous wallpaper");
         engine.apply(&image)?;
-        history.step_prev();
-        persist_history(&wall_dir, &history)?;
-        return Ok(image);
-    }
-
-    if config.slideshow.randomize {
-        bail!("No previous wallpaper available in history");
-    }
-
-    let mut selector = match history.current_cloned() {
-        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
-        None => ImageSelector::new(images, config.slideshow.randomize)?,
-    };
-    let image = selector.prev().to_path_buf();
-
-    tracing::info!(image = %image.display(), "Applying previous wallpaper");
-    engine.apply(&image)?;
-    history.prepend_previous(image.clone());
-    persist_history(&wall_dir, &history)?;
-
-    Ok(image)
+        history.prepend_previous(image.clone());
+        Ok(image)
+    })
 }
 
 pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result<()> {
@@ -512,7 +601,13 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
     loop {
         if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
             history.record(image.clone());
-            if let Err(error) = persist_history(&wall_dir, &history) {
+            let latest_image = image.clone();
+            if let Err(error) =
+                with_locked_history_from(&last_image_state_path(), &wall_dir, |state| {
+                    state.record(latest_image.clone());
+                    Ok(())
+                })
+            {
                 tracing::warn!(error = %error, path = %image.display(), "Failed to persist wallpaper history state");
             }
         }
@@ -537,6 +632,7 @@ mod tests {
     use std::os::unix::process::ExitStatusExt;
     use std::process::{ExitStatus, Output};
     use std::sync::Mutex;
+    use std::thread;
 
     #[derive(Debug)]
     struct Invocation {
@@ -935,6 +1031,91 @@ mod tests {
 
         let loaded = load_history_from(&state_path, dir.path()).expect("load history");
         assert_eq!(loaded.current(), Some(&image));
+    }
+
+    #[test]
+    fn history_lock_blocks_second_writer() {
+        let state_dir = tempfile::tempdir().expect("tempdir");
+        let state_path = state_dir.path().join("last_image");
+
+        let first_lock = acquire_history_lock(&state_path).expect("first lock");
+        let second_file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(history_lock_path(&state_path))
+            .expect("open second lock handle");
+
+        assert!(
+            second_file.try_lock().is_err(),
+            "second writer should be blocked"
+        );
+        drop(first_lock);
+        second_file.lock().expect("lock after release");
+    }
+
+    #[test]
+    fn persist_history_to_cleans_temp_files() {
+        let dir = make_test_dir(&["a.jpg"]);
+        let state_dir = tempfile::tempdir().expect("tempdir");
+        let state_path = state_dir.path().join("last_image");
+
+        persist_history_to(
+            &state_path,
+            dir.path(),
+            &HistoryState {
+                cursor: 0,
+                entries: vec![dir.path().join("a.jpg")],
+            },
+        )
+        .expect("persist history");
+
+        let leftovers: Vec<String> = fs::read_dir(state_dir.path())
+            .expect("read dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.contains(".last_image.tmp."))
+            .collect();
+
+        assert!(
+            leftovers.is_empty(),
+            "temp files should be cleaned up: {leftovers:?}"
+        );
+    }
+
+    #[test]
+    fn locked_history_updates_serialize_concurrent_writers() {
+        let wall_dir = tempfile::tempdir().expect("tempdir");
+        let state_dir = tempfile::tempdir().expect("tempdir");
+        let state_path = state_dir.path().join("last_image");
+
+        let handles: Vec<_> = (0..8)
+            .map(|index| {
+                let state_path = state_path.clone();
+                let wall_dir = wall_dir.path().to_path_buf();
+                thread::spawn(move || {
+                    let image = wall_dir.join(format!("{index}.jpg"));
+                    with_locked_history_from(&state_path, &wall_dir, |state| {
+                        state.record(image.clone());
+                        Ok(())
+                    })
+                    .expect("persist locked history");
+                })
+            })
+            .collect();
+
+        for handle in handles {
+            handle.join().expect("writer thread");
+        }
+
+        let loaded = load_history_from(&state_path, wall_dir.path()).expect("load history");
+        assert_eq!(loaded.entries.len(), 8);
+
+        let unique: HashSet<PathBuf> = loaded.entries.iter().cloned().collect();
+        assert_eq!(
+            unique.len(),
+            8,
+            "each writer should persist exactly one unique entry"
+        );
     }
 
     #[test]

@@ -116,21 +116,8 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
     }
 
     fn apply_swww(&self, path: &str) -> Result<()> {
-        // Ensure swww-daemon is running
         if !self.runner.is_running("swww-daemon") {
-            tracing::info!("swww-daemon not running — starting it");
-            let output = self.runner.run("swww-daemon", &[])?;
-            // swww-daemon daemonizes itself; a non-zero exit is fine if it's
-            // already running.  We only care about the img command succeeding.
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // "already running" is not an error
-                if !stderr.to_lowercase().contains("already running") {
-                    tracing::warn!(stderr = %stderr, "swww-daemon start returned non-zero");
-                }
-            }
-            // Give the daemon a moment to initialize its socket
-            std::thread::sleep(std::time::Duration::from_millis(300));
+            self.start_swww_daemon()?;
         }
 
         let opts = &self.config.swww_options;
@@ -154,8 +141,41 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
 
         tracing::info!(backend = "swww", "Setting wallpaper");
         let output = self.runner.run("swww", &arg_refs)?;
+        if !output.status.success() && is_recoverable_swww_failure(&output) {
+            tracing::warn!("Recovering swww-daemon after wallpaper apply failure");
+            self.recover_swww_daemon()?;
+            let retry = self.runner.run("swww", &arg_refs)?;
+            check_output("swww img", &retry)?;
+            return Ok(());
+        }
         check_output("swww img", &output)?;
         Ok(())
+    }
+
+    fn start_swww_daemon(&self) -> Result<()> {
+        tracing::info!("swww-daemon not running — starting it");
+        let output = self
+            .runner
+            .run_shell("nohup swww-daemon >/dev/null 2>&1 &")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::warn!(stderr = %stderr, "swww-daemon start returned non-zero");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        Ok(())
+    }
+
+    fn recover_swww_daemon(&self) -> Result<()> {
+        let _ = self
+            .runner
+            .run_shell("pkill -x swww-daemon >/dev/null 2>&1 || true");
+
+        if let Some(socket_path) = swww_socket_path() {
+            let cleanup = format!("rm -f -- {}", shell_quote(&socket_path));
+            let _ = self.runner.run_shell(&cleanup);
+        }
+
+        self.start_swww_daemon()
     }
 
     fn apply_hyprpaper(&self, path: &str) -> Result<()> {
@@ -245,6 +265,32 @@ fn check_output(label: &str, output: &Output) -> Result<()> {
         );
     }
     Ok(())
+}
+
+fn is_recoverable_swww_failure(output: &Output) -> bool {
+    let stdout = String::from_utf8_lossy(&output.stdout).to_lowercase();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_lowercase();
+
+    [
+        "received malformed answer from daemon",
+        "failed to connect to socket",
+        "connection refused",
+        "address already in use",
+        "socket file",
+    ]
+    .iter()
+    .any(|needle| stdout.contains(needle) || stderr.contains(needle))
+}
+
+fn swww_socket_path() -> Option<String> {
+    let runtime_dir = std::env::var("XDG_RUNTIME_DIR").ok()?;
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok()?;
+    Some(format!("{runtime_dir}/{wayland_display}-awww-daemon.sock"))
+}
+
+fn shell_quote(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
 // ===========================================================================
@@ -455,9 +501,9 @@ mod tests {
             .expect("should succeed");
 
         let invocations = runner.invocations();
-        // First invocation: start daemon, second: swww img
         assert_eq!(invocations.len(), 2);
-        assert_eq!(invocations[0].program, "swww-daemon");
+        assert_eq!(invocations[0].program, "sh");
+        assert!(invocations[0].args[1].contains("nohup swww-daemon >/dev/null 2>&1 &"));
         assert_eq!(invocations[1].program, "swww");
         assert_eq!(invocations[1].args[0], "img");
     }
@@ -656,6 +702,11 @@ mod tests {
     /// A runner that always returns a non-zero exit code.
     struct FailingMockRunner;
 
+    struct RecoveringSwwwRunner {
+        log: Mutex<Vec<Invocation>>,
+        img_calls: Mutex<usize>,
+    }
+
     fn mock_failure(stderr_msg: &str) -> Output {
         Output {
             status: ExitStatus::from_raw(256), // exit code 1
@@ -672,6 +723,61 @@ mod tests {
             Ok(mock_failure("mock shell failure"))
         }
         fn is_running(&self, _name: &str) -> bool {
+            true
+        }
+    }
+
+    impl RecoveringSwwwRunner {
+        fn new() -> Self {
+            Self {
+                log: Mutex::new(Vec::new()),
+                img_calls: Mutex::new(0),
+            }
+        }
+
+        fn invocations(&self) -> Vec<Invocation> {
+            self.log
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|inv| Invocation {
+                    program: inv.program.clone(),
+                    args: inv.args.clone(),
+                    is_shell: inv.is_shell,
+                })
+                .collect()
+        }
+    }
+
+    impl CommandRunner for RecoveringSwwwRunner {
+        fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+            self.log.lock().unwrap().push(Invocation {
+                program: program.to_string(),
+                args: args.iter().map(|s| s.to_string()).collect(),
+                is_shell: false,
+            });
+
+            if program == "swww" {
+                let mut calls = self.img_calls.lock().unwrap();
+                *calls += 1;
+                if *calls == 1 {
+                    return Ok(mock_failure("Received malformed answer from daemon"));
+                }
+            }
+
+            Ok(mock_success())
+        }
+
+        fn run_shell(&self, cmd: &str) -> Result<Output> {
+            self.log.lock().unwrap().push(Invocation {
+                program: "sh".to_string(),
+                args: vec!["-c".to_string(), cmd.to_string()],
+                is_shell: true,
+            });
+            Ok(mock_success())
+        }
+
+        fn is_running(&self, _process_name: &str) -> bool {
             true
         }
     }
@@ -1028,6 +1134,40 @@ mod tests {
                 "--transition-fps",
                 "60"
             ]
+        );
+    }
+
+    #[test]
+    fn swww_recovers_from_malformed_daemon_answer() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Swww,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let runner = RecoveringSwwwRunner::new();
+        let engine = Engine::new(&config, &runner);
+
+        engine
+            .apply_wallpaper("/tmp/wall.png")
+            .expect("should recover and succeed");
+
+        let invocations = runner.invocations();
+        let swww_calls = invocations
+            .iter()
+            .filter(|inv| inv.program == "swww")
+            .count();
+        assert_eq!(swww_calls, 2);
+        assert!(invocations
+            .iter()
+            .any(|inv| inv.program == "sh" && inv.args[1].contains("pkill -x swww-daemon")));
+        assert!(invocations.iter().any(|inv| {
+            inv.program == "sh" && inv.args[1].contains("nohup swww-daemon >/dev/null 2>&1 &")
+        }));
+        assert_eq!(
+            invocations.last().map(|inv| inv.program.as_str()),
+            Some("swww")
         );
     }
 

@@ -24,7 +24,6 @@ pub(crate) fn is_supported_image_path(path: &Path) -> bool {
             .unwrap_or(false)
 }
 
-const HISTORY_LIMIT: usize = 32;
 static HISTORY_TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn last_image_state_path() -> PathBuf {
@@ -72,7 +71,7 @@ impl HistoryState {
         }
     }
 
-    fn record(&mut self, image: PathBuf) {
+    fn record(&mut self, image: PathBuf, history_limit: usize) {
         if self.current() == Some(&image) {
             return;
         }
@@ -82,15 +81,15 @@ impl HistoryState {
         }
 
         self.entries.push(image);
-        if self.entries.len() > HISTORY_LIMIT {
-            let excess = self.entries.len() - HISTORY_LIMIT;
+        if self.entries.len() > history_limit {
+            let excess = self.entries.len() - history_limit;
             self.entries.drain(0..excess);
             self.cursor = self.cursor.saturating_sub(excess);
         }
         self.cursor = self.entries.len() - 1;
     }
 
-    fn prepend_previous(&mut self, image: PathBuf) {
+    fn prepend_previous(&mut self, image: PathBuf, history_limit: usize) {
         if self.current() == Some(&image) {
             return;
         }
@@ -102,7 +101,7 @@ impl HistoryState {
         }
 
         self.entries.insert(self.cursor, image);
-        if self.entries.len() > HISTORY_LIMIT {
+        if self.entries.len() > history_limit {
             self.entries.pop();
         }
     }
@@ -310,10 +309,10 @@ fn load_history(wall_dir: &Path) -> Result<HistoryState> {
     load_history_from(&last_image_state_path(), wall_dir)
 }
 
-pub fn persist_last_image(wall_dir: &Path, image: &Path) -> Result<()> {
+pub fn persist_last_image(wall_dir: &Path, image: &Path, history_limit: usize) -> Result<()> {
     let state_path = last_image_state_path();
     with_locked_history_from(&state_path, wall_dir, |state| {
-        state.record(image.to_path_buf());
+        state.record(image.to_path_buf(), history_limit);
         Ok(())
     })
 }
@@ -534,7 +533,7 @@ pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
 
         tracing::info!(image = %image.display(), "Applying next wallpaper");
         engine.apply(&image)?;
-        history.record(image.clone());
+        history.record(image.clone(), config.slideshow.history_limit);
         Ok(image)
     })
 }
@@ -568,7 +567,7 @@ pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
 
         tracing::info!(image = %image.display(), "Applying previous wallpaper");
         engine.apply(&image)?;
-        history.prepend_previous(image.clone());
+        history.prepend_previous(image.clone(), config.slideshow.history_limit);
         Ok(image)
     })
 }
@@ -600,11 +599,11 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
 
     loop {
         if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
-            history.record(image.clone());
+            history.record(image.clone(), config.slideshow.history_limit);
             let latest_image = image.clone();
             if let Err(error) =
                 with_locked_history_from(&last_image_state_path(), &wall_dir, |state| {
-                    state.record(latest_image.clone());
+                    state.record(latest_image.clone(), config.slideshow.history_limit);
                     Ok(())
                 })
             {
@@ -1095,7 +1094,7 @@ mod tests {
                 thread::spawn(move || {
                     let image = wall_dir.join(format!("{index}.jpg"));
                     with_locked_history_from(&state_path, &wall_dir, |state| {
-                        state.record(image.clone());
+                        state.record(image.clone(), 32);
                         Ok(())
                     })
                     .expect("persist locked history");
@@ -1129,7 +1128,7 @@ mod tests {
             ],
         };
 
-        history.record(PathBuf::from("/img/d.jpg"));
+        history.record(PathBuf::from("/img/d.jpg"), 32);
 
         assert_eq!(
             history.entries,
@@ -1149,10 +1148,41 @@ mod tests {
             entries: vec![PathBuf::from("/img/a.jpg")],
         };
 
-        history.record(PathBuf::from("/img/a.jpg"));
+        history.record(PathBuf::from("/img/a.jpg"), 32);
 
         assert_eq!(history.entries, vec![PathBuf::from("/img/a.jpg")]);
         assert_eq!(history.cursor, 0);
+    }
+
+    #[test]
+    fn history_record_respects_configured_limit() {
+        let mut history = HistoryState::default();
+
+        history.record(PathBuf::from("/img/a.jpg"), 2);
+        history.record(PathBuf::from("/img/b.jpg"), 2);
+        history.record(PathBuf::from("/img/c.jpg"), 2);
+
+        assert_eq!(
+            history.entries,
+            vec![PathBuf::from("/img/b.jpg"), PathBuf::from("/img/c.jpg")]
+        );
+        assert_eq!(history.cursor, 1);
+    }
+
+    #[test]
+    fn history_prepend_previous_respects_configured_limit() {
+        let mut history = HistoryState {
+            cursor: 1,
+            entries: vec![PathBuf::from("/img/b.jpg"), PathBuf::from("/img/c.jpg")],
+        };
+
+        history.prepend_previous(PathBuf::from("/img/a.jpg"), 2);
+
+        assert_eq!(
+            history.entries,
+            vec![PathBuf::from("/img/b.jpg"), PathBuf::from("/img/a.jpg")]
+        );
+        assert_eq!(history.cursor, 1);
     }
 
     #[test]

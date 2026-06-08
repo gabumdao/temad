@@ -244,6 +244,7 @@ mod tests {
                 directory: temp.path().display().to_string(),
                 interval_seconds: 120,
                 randomize: true,
+                history_limit: 32,
             },
             backends: BackendsConfig::default(),
             hooks: HooksConfig {

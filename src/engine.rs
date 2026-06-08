@@ -1,6 +1,8 @@
 use anyhow::{bail, Context, Result};
 use std::path::Path;
-use std::process::Output;
+use std::process::{Command, Output, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use crate::config::{ColorBackend, Config, WallpaperBackend};
 
@@ -26,31 +28,70 @@ pub trait CommandRunner: Send + Sync {
 // ---------------------------------------------------------------------------
 
 /// The default runner that actually spawns subprocesses.
-pub struct RealCommandRunner;
+pub struct RealCommandRunner {
+    timeout: Duration,
+}
+
+impl RealCommandRunner {
+    pub fn new(timeout: Duration) -> Self {
+        Self { timeout }
+    }
+
+    fn run_command(&self, mut command: Command, label: &str) -> Result<Output> {
+        let mut child = command
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("Failed to execute: {label}"))?;
+
+        let started = Instant::now();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    return child
+                        .wait_with_output()
+                        .with_context(|| format!("Failed to collect output: {label}"));
+                }
+                Ok(None) if started.elapsed() >= self.timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    bail!("{label} timed out after {} seconds", self.timeout.as_secs());
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(10)),
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(error)
+                        .with_context(|| format!("Failed while waiting for: {label}"));
+                }
+            }
+        }
+    }
+}
+
+impl Default for RealCommandRunner {
+    fn default() -> Self {
+        Self::new(Duration::from_secs(30))
+    }
+}
 
 impl CommandRunner for RealCommandRunner {
     fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
         tracing::debug!(program, ?args, "exec");
-        std::process::Command::new(program)
-            .args(args)
-            .output()
-            .with_context(|| format!("Failed to execute: {program}"))
+        let mut command = Command::new(program);
+        command.args(args);
+        self.run_command(command, program)
     }
 
     fn run_shell(&self, cmd: &str) -> Result<Output> {
         tracing::debug!(cmd, "sh -c");
-        std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .output()
-            .with_context(|| format!("Failed to run shell command: {cmd}"))
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(cmd);
+        self.run_command(command, cmd)
     }
 
     fn is_running(&self, process_name: &str) -> bool {
-        std::process::Command::new("pgrep")
-            .arg("-x")
-            .arg(process_name)
-            .output()
+        self.run("pgrep", &["-x", process_name])
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
@@ -707,6 +748,10 @@ mod tests {
         img_calls: Mutex<usize>,
     }
 
+    struct TimeoutOnlyRunner {
+        timeout: Duration,
+    }
+
     fn mock_failure(stderr_msg: &str) -> Output {
         Output {
             status: ExitStatus::from_raw(256), // exit code 1
@@ -749,6 +794,16 @@ mod tests {
         }
     }
 
+    impl TimeoutOnlyRunner {
+        fn new(timeout: Duration) -> Self {
+            Self { timeout }
+        }
+
+        fn real(&self) -> RealCommandRunner {
+            RealCommandRunner::new(self.timeout)
+        }
+    }
+
     impl CommandRunner for RecoveringSwwwRunner {
         fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
             self.log.lock().unwrap().push(Invocation {
@@ -779,6 +834,20 @@ mod tests {
 
         fn is_running(&self, _process_name: &str) -> bool {
             true
+        }
+    }
+
+    impl CommandRunner for TimeoutOnlyRunner {
+        fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+            self.real().run(program, args)
+        }
+
+        fn run_shell(&self, cmd: &str) -> Result<Output> {
+            self.real().run_shell(cmd)
+        }
+
+        fn is_running(&self, process_name: &str) -> bool {
+            self.real().is_running(process_name)
         }
     }
 
@@ -1169,6 +1238,37 @@ mod tests {
             invocations.last().map(|inv| inv.program.as_str()),
             Some("swww")
         );
+    }
+
+    #[test]
+    fn real_runner_times_out_shell_command() {
+        let runner = TimeoutOnlyRunner::new(Duration::from_millis(50));
+
+        let result = runner.run_shell("sleep 1");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn real_runner_allows_short_shell_command() {
+        let runner = TimeoutOnlyRunner::new(Duration::from_secs(1));
+
+        let output = runner
+            .run_shell("printf ok")
+            .expect("short command should succeed");
+
+        assert_eq!(String::from_utf8_lossy(&output.stdout), "ok");
+    }
+
+    #[test]
+    fn real_runner_times_out_direct_command() {
+        let runner = TimeoutOnlyRunner::new(Duration::from_millis(50));
+
+        let result = runner.run("sh", &["-c", "sleep 1"]);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("timed out"));
     }
 
     // -- Path with spaces -----------------------------------------------------

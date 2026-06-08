@@ -29,7 +29,8 @@ fn default_config_template() -> &'static str {
         "[slideshow]\n",
         "directory = \"~/Pictures/Wallpapers\"\n",
         "interval_seconds = 300\n",
-        "randomize = true\n\n",
+        "randomize = true\n",
+        "history_limit = 32\n\n",
         "[backends]\n",
         "colors = \"wallust\"\n",
         "wallpaper = \"swww\"\n\n",
@@ -37,6 +38,8 @@ fn default_config_template() -> &'static str {
         "transition_type = \"random\"\n",
         "transition_step = 100\n",
         "transition_fps = 60\n\n",
+        "[commands]\n",
+        "timeout_seconds = 30\n\n",
         "[hooks]\n",
         "post_update = []\n"
     )
@@ -60,6 +63,8 @@ mod tests {
         let loaded = load_config(&path).expect("generated config should load");
         assert_eq!(loaded.slideshow.interval_seconds, 300);
         assert!(loaded.slideshow.randomize);
+        assert_eq!(loaded.slideshow.history_limit, 32);
+        assert_eq!(loaded.commands.timeout_seconds, 30);
     }
 
     #[test]

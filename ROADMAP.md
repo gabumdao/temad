@@ -19,6 +19,8 @@
 - [x] Persisted history writes made lock-safe and atomic.
 - [x] `temad history` added for read-only inspection of persisted wallpaper history.
 - [x] `temad init` added for first-run config bootstrap.
+- [x] External command execution now respects configurable timeouts.
+- [x] Wallpaper history depth is now configurable.
 
 ## In Progress
 
@@ -28,8 +30,6 @@
 
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
 - [ ] Support optional recursive wallpaper discovery.
-- [ ] Support configurable history depth instead of a fixed internal limit.
-- [ ] Add optional command timeouts for external tools and hooks.
 - [ ] Consider better multi-monitor targeting for wallpaper backends.
 - [ ] Split large modules like `slideshow.rs` as the feature surface grows.
 

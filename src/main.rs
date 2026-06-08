@@ -11,6 +11,7 @@ use anyhow::{bail, Result};
 use clap::Parser;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Command};
@@ -71,7 +72,7 @@ async fn main() -> Result<()> {
     }
 
     let config_path = resolve_config_path(cli.config.as_deref());
-    let runner = RealCommandRunner;
+    let doctor_runner = RealCommandRunner::default();
 
     if let Command::Init = cli.command {
         print!("{}", init::init_config(&config_path)?);
@@ -79,7 +80,7 @@ async fn main() -> Result<()> {
     }
 
     if let Command::Doctor = cli.command {
-        let healthy = doctor::run_doctor(&config_path, &runner)?;
+        let healthy = doctor::run_doctor(&config_path, &doctor_runner)?;
         if !healthy {
             std::process::exit(1);
         }
@@ -87,6 +88,7 @@ async fn main() -> Result<()> {
     }
 
     let config = load_config(&config_path)?;
+    let runner = RealCommandRunner::new(Duration::from_secs(config.commands.timeout_seconds));
 
     tracing::debug!(?config, "Effective configuration");
 
@@ -116,7 +118,11 @@ async fn main() -> Result<()> {
             tracing::info!(path = %abs.display(), "Setting wallpaper");
             let engine = Engine::new(&config, &runner);
             engine.apply(&abs)?;
-            if let Err(error) = slideshow::persist_last_image(&config.wallpaper_dir(), &abs) {
+            if let Err(error) = slideshow::persist_last_image(
+                &config.wallpaper_dir(),
+                &abs,
+                config.slideshow.history_limit,
+            ) {
                 tracing::warn!(error = %error, path = %abs.display(), "Failed to persist last wallpaper state");
             }
         }

@@ -135,6 +135,9 @@ interval_seconds = 300
 # When false, images cycle alphabetically.
 randomize = true
 
+# Maximum number of wallpaper history entries to persist (default: 32).
+history_limit = 32
+
 [backends]
 # Color extraction backend.
 # Supported: "wallust" (default), "matugen", "none"
@@ -151,6 +154,10 @@ transition_type = "random"
 transition_step = 100
 transition_fps = 60
 transition_duration = 2
+
+[commands]
+# Maximum number of seconds to allow external commands to run (default: 30).
+timeout_seconds = 30
 
 [hooks]
 # Shell commands executed AFTER colors and wallpaper are applied.
@@ -179,6 +186,7 @@ post_update = [
 | `directory` | String | `~/Pictures/Wallpapers` | Path to your wallpaper directory. Supports `~` expansion. |
 | `interval_seconds` | Integer | `300` | Seconds between wallpaper changes in daemon mode. |
 | `randomize` | Boolean | `true` | Random selection (`true`) or alphabetical cycling (`false`). |
+| `history_limit` | Integer | `32` | Maximum number of persisted wallpaper history entries. |
 
 #### `[backends]`
 
@@ -186,6 +194,12 @@ post_update = [
 |---|---|---|---|
 | `colors` | String | `wallust` | `wallust`, `matugen`, `none` |
 | `wallpaper` | String | `swww` | `swww`, `hyprpaper`, `wbg` |
+
+#### `[commands]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `timeout_seconds` | Integer | `30` | Maximum runtime allowed for external commands before `temad` aborts them. |
 
 #### `[swww_options]`
 
@@ -388,7 +402,7 @@ src/
 
 ## Testing
 
-The project includes **121 unit and integration tests** covering:
+The project includes **129 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)

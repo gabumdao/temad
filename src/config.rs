@@ -13,6 +13,7 @@ pub struct Config {
     pub slideshow: SlideshowConfig,
     pub backends: BackendsConfig,
     pub swww_options: SwwwOptions,
+    pub commands: CommandsConfig,
     pub hooks: HooksConfig,
 }
 
@@ -32,6 +33,8 @@ pub struct SlideshowConfig {
 
     /// Whether to randomize image selection order.
     pub randomize: bool,
+
+    pub history_limit: usize,
 }
 
 impl Default for SlideshowConfig {
@@ -40,6 +43,21 @@ impl Default for SlideshowConfig {
             directory: "~/Pictures/Wallpapers".to_string(),
             interval_seconds: 300,
             randomize: true,
+            history_limit: 32,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct CommandsConfig {
+    pub timeout_seconds: u64,
+}
+
+impl Default for CommandsConfig {
+    fn default() -> Self {
+        Self {
+            timeout_seconds: 30,
         }
     }
 }
@@ -180,6 +198,14 @@ pub fn load_config(path: &Path) -> Result<Config> {
         bail!("slideshow.interval_seconds must be greater than 0");
     }
 
+    if config.slideshow.history_limit == 0 {
+        bail!("slideshow.history_limit must be greater than 0");
+    }
+
+    if config.commands.timeout_seconds == 0 {
+        bail!("commands.timeout_seconds must be greater than 0");
+    }
+
     tracing::info!(path = %path.display(), "Loaded configuration");
     Ok(config)
 }
@@ -237,6 +263,7 @@ mod tests {
 directory = "~/Pictures/Walls"
 interval_seconds = 600
 randomize = false
+history_limit = 16
 
 [backends]
 colors = "matugen"
@@ -253,6 +280,9 @@ post_update = [
     "echo hello",
     "notify-send 'wallpaper changed'"
 ]
+
+[commands]
+timeout_seconds = 12
 "#;
 
         let config: Config = toml::from_str(toml_str).expect("valid TOML");
@@ -260,6 +290,7 @@ post_update = [
         assert_eq!(config.slideshow.directory, "~/Pictures/Walls");
         assert_eq!(config.slideshow.interval_seconds, 600);
         assert!(!config.slideshow.randomize);
+        assert_eq!(config.slideshow.history_limit, 16);
 
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Hyprpaper);
@@ -271,6 +302,7 @@ post_update = [
 
         assert_eq!(config.hooks.post_update.len(), 2);
         assert_eq!(config.hooks.post_update[0], "echo hello");
+        assert_eq!(config.commands.timeout_seconds, 12);
     }
 
     // -- Default fallbacks ----------------------------------------------------
@@ -282,8 +314,10 @@ post_update = [
         assert_eq!(config.slideshow.directory, "~/Pictures/Wallpapers");
         assert_eq!(config.slideshow.interval_seconds, 300);
         assert!(config.slideshow.randomize);
+        assert_eq!(config.slideshow.history_limit, 32);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
+        assert_eq!(config.commands.timeout_seconds, 30);
         assert!(config.hooks.post_update.is_empty());
     }
 
@@ -301,8 +335,10 @@ interval_seconds = 120
         // Defaults
         assert_eq!(config.slideshow.directory, "~/Pictures/Wallpapers");
         assert!(config.slideshow.randomize);
+        assert_eq!(config.slideshow.history_limit, 32);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
+        assert_eq!(config.commands.timeout_seconds, 30);
     }
 
     // -- Backend deserialization -----------------------------------------------
@@ -375,6 +411,7 @@ foo = "bar"
 directory = "/custom/walls"
 interval_seconds = 42
 randomize = false
+history_limit = 7
 
 [backends]
 colors = "matugen"
@@ -382,6 +419,9 @@ wallpaper = "wbg"
 
 [hooks]
 post_update = ["echo loaded"]
+
+[commands]
+timeout_seconds = 9
 "#,
         )
         .expect("write");
@@ -390,9 +430,11 @@ post_update = ["echo loaded"]
         assert_eq!(config.slideshow.directory, "/custom/walls");
         assert_eq!(config.slideshow.interval_seconds, 42);
         assert!(!config.slideshow.randomize);
+        assert_eq!(config.slideshow.history_limit, 7);
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Wbg);
         assert_eq!(config.hooks.post_update, vec!["echo loaded"]);
+        assert_eq!(config.commands.timeout_seconds, 9);
     }
 
     #[test]
@@ -401,7 +443,9 @@ post_update = ["echo loaded"]
         let config = load_config(&path).expect("should return defaults");
         assert_eq!(config.slideshow.interval_seconds, 300);
         assert!(config.slideshow.randomize);
+        assert_eq!(config.slideshow.history_limit, 32);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
+        assert_eq!(config.commands.timeout_seconds, 30);
     }
 
     #[test]
@@ -449,6 +493,44 @@ interval_seconds = 1
 
         let config = load_config(&path).expect("positive interval should load");
         assert_eq!(config.slideshow.interval_seconds, 1);
+    }
+
+    #[test]
+    fn load_config_rejects_zero_history_limit() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("zero_history_limit.toml");
+        std::fs::write(
+            &path,
+            r#"
+[slideshow]
+history_limit = 0
+"#,
+        )
+        .expect("write");
+
+        let result = load_config(&path);
+        assert!(result.is_err(), "zero history limit should return Err");
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("slideshow.history_limit"));
+    }
+
+    #[test]
+    fn load_config_rejects_zero_command_timeout() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("zero_timeout.toml");
+        std::fs::write(
+            &path,
+            r#"
+[commands]
+timeout_seconds = 0
+"#,
+        )
+        .expect("write");
+
+        let result = load_config(&path);
+        assert!(result.is_err(), "zero command timeout should return Err");
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("commands.timeout_seconds"));
     }
 
     // -- resolve_config_path --------------------------------------------------

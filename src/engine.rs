@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -30,6 +31,13 @@ pub trait CommandRunner: Send + Sync {
 /// The default runner that actually spawns subprocesses.
 pub struct RealCommandRunner {
     timeout: Duration,
+}
+
+pub struct DryRunCommandRunner;
+
+pub enum AppCommandRunner {
+    Real(RealCommandRunner),
+    DryRun(DryRunCommandRunner),
 }
 
 impl RealCommandRunner {
@@ -72,6 +80,54 @@ impl RealCommandRunner {
 impl Default for RealCommandRunner {
     fn default() -> Self {
         Self::new(Duration::from_secs(30))
+    }
+}
+
+impl CommandRunner for DryRunCommandRunner {
+    fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+        tracing::info!(program, ?args, "Dry-run exec");
+        Ok(Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
+    fn run_shell(&self, cmd: &str) -> Result<Output> {
+        tracing::info!(cmd, "Dry-run shell command");
+        Ok(Output {
+            status: std::process::ExitStatus::from_raw(0),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        })
+    }
+
+    fn is_running(&self, process_name: &str) -> bool {
+        tracing::info!(process_name, "Dry-run process probe");
+        false
+    }
+}
+
+impl CommandRunner for AppCommandRunner {
+    fn run(&self, program: &str, args: &[&str]) -> Result<Output> {
+        match self {
+            AppCommandRunner::Real(runner) => runner.run(program, args),
+            AppCommandRunner::DryRun(runner) => runner.run(program, args),
+        }
+    }
+
+    fn run_shell(&self, cmd: &str) -> Result<Output> {
+        match self {
+            AppCommandRunner::Real(runner) => runner.run_shell(cmd),
+            AppCommandRunner::DryRun(runner) => runner.run_shell(cmd),
+        }
+    }
+
+    fn is_running(&self, process_name: &str) -> bool {
+        match self {
+            AppCommandRunner::Real(runner) => runner.is_running(process_name),
+            AppCommandRunner::DryRun(runner) => runner.is_running(process_name),
+        }
     }
 }
 

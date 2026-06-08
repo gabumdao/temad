@@ -40,7 +40,7 @@ fn build_status_report<R: CommandRunner>(
         "defaults"
     };
 
-    let directory_status = match discover_images(wall_dir) {
+    let directory_status = match discover_images(wall_dir, config.slideshow.recursive) {
         Ok(images) => format!("ok ({})", pluralize(images.len(), "supported image")),
         Err(_) if !wall_dir.exists() => "missing".to_string(),
         Err(_) if !wall_dir.is_dir() => "not a directory".to_string(),
@@ -245,6 +245,7 @@ mod tests {
                 interval_seconds: 120,
                 randomize: true,
                 history_limit: 32,
+                recursive: false,
             },
             backends: BackendsConfig::default(),
             hooks: HooksConfig {

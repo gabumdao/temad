@@ -21,6 +21,8 @@
 - [x] `temad init` added for first-run config bootstrap.
 - [x] External command execution now respects configurable timeouts.
 - [x] Wallpaper history depth is now configurable.
+- [x] Recursive wallpaper scanning added.
+- [x] `--dry-run` preview mode added for mutating commands.
 
 ## In Progress
 
@@ -29,7 +31,6 @@
 ## Planned Next
 
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
-- [ ] Support optional recursive wallpaper discovery.
 - [ ] Consider better multi-monitor targeting for wallpaper backends.
 - [ ] Split large modules like `slideshow.rs` as the feature surface grows.
 

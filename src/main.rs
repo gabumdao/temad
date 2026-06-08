@@ -16,7 +16,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
-use crate::engine::{Engine, RealCommandRunner};
+use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
 fn init_logging(verbosity: u8) {
     let filter = match verbosity {
@@ -72,7 +72,11 @@ async fn main() -> Result<()> {
     }
 
     let config_path = resolve_config_path(cli.config.as_deref());
-    let doctor_runner = RealCommandRunner::default();
+    let doctor_runner = if cli.dry_run {
+        AppCommandRunner::DryRun(DryRunCommandRunner)
+    } else {
+        AppCommandRunner::Real(RealCommandRunner::default())
+    };
 
     if let Command::Init = cli.command {
         print!("{}", init::init_config(&config_path)?);
@@ -88,7 +92,13 @@ async fn main() -> Result<()> {
     }
 
     let config = load_config(&config_path)?;
-    let runner = RealCommandRunner::new(Duration::from_secs(config.commands.timeout_seconds));
+    let runner = if cli.dry_run {
+        AppCommandRunner::DryRun(DryRunCommandRunner)
+    } else {
+        AppCommandRunner::Real(RealCommandRunner::new(Duration::from_secs(
+            config.commands.timeout_seconds,
+        )))
+    };
 
     tracing::debug!(?config, "Effective configuration");
 
@@ -101,7 +111,7 @@ async fn main() -> Result<()> {
                 randomize = config.slideshow.randomize,
                 "Slideshow configuration"
             );
-            slideshow::run_daemon(&config, &runner).await?;
+            slideshow::run_daemon(&config, &runner, cli.dry_run).await?;
         }
         Command::Status => {
             let report = status::render_status(&config_path, &config, &runner);
@@ -118,20 +128,22 @@ async fn main() -> Result<()> {
             tracing::info!(path = %abs.display(), "Setting wallpaper");
             let engine = Engine::new(&config, &runner);
             engine.apply(&abs)?;
-            if let Err(error) = slideshow::persist_last_image(
-                &config.wallpaper_dir(),
-                &abs,
-                config.slideshow.history_limit,
-            ) {
-                tracing::warn!(error = %error, path = %abs.display(), "Failed to persist last wallpaper state");
+            if !cli.dry_run {
+                if let Err(error) = slideshow::persist_last_image(
+                    &config.wallpaper_dir(),
+                    &abs,
+                    config.slideshow.history_limit,
+                ) {
+                    tracing::warn!(error = %error, path = %abs.display(), "Failed to persist last wallpaper state");
+                }
             }
         }
         Command::Next => {
-            let image = slideshow::run_next(&config, &runner)?;
+            let image = slideshow::run_next(&config, &runner, cli.dry_run)?;
             tracing::info!(path = %image.display(), "Applied next wallpaper");
         }
         Command::Prev => {
-            let image = slideshow::run_prev(&config, &runner)?;
+            let image = slideshow::run_prev(&config, &runner, cli.dry_run)?;
             tracing::info!(path = %image.display(), "Applied previous wallpaper");
         }
         Command::Completions { .. } => unreachable!("handled before config load"),

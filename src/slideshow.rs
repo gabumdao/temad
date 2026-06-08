@@ -318,7 +318,7 @@ pub fn persist_last_image(wall_dir: &Path, image: &Path, history_limit: usize) -
 }
 
 /// Scan `directory` and return all files with a valid image extension.
-pub fn discover_images(directory: &Path) -> Result<Vec<PathBuf>> {
+pub fn discover_images(directory: &Path, recursive: bool) -> Result<Vec<PathBuf>> {
     if !directory.is_dir() {
         bail!(
             "Wallpaper directory does not exist or is not a directory: {}",
@@ -326,12 +326,8 @@ pub fn discover_images(directory: &Path) -> Result<Vec<PathBuf>> {
         );
     }
 
-    let mut images: Vec<PathBuf> = std::fs::read_dir(directory)
-        .with_context(|| format!("Failed to read directory: {}", directory.display()))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| is_supported_image_path(path))
-        .collect();
+    let mut images = Vec::new();
+    collect_images(directory, recursive, &mut images)?;
 
     // Sort for deterministic ordering before any shuffle
     images.sort();
@@ -343,6 +339,30 @@ pub fn discover_images(directory: &Path) -> Result<Vec<PathBuf>> {
     );
 
     Ok(images)
+}
+
+fn collect_images(directory: &Path, recursive: bool, images: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(directory)
+        .with_context(|| format!("Failed to read directory: {}", directory.display()))?
+    {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.is_dir() {
+            if recursive {
+                collect_images(&path, recursive, images)?;
+            }
+            continue;
+        }
+
+        if is_supported_image_path(&path) {
+            images.push(path);
+        }
+    }
+
+    Ok(())
 }
 
 // ===========================================================================
@@ -483,7 +503,7 @@ pub fn run_daemon_cycle<R: CommandRunner>(
     selector: &mut ImageSelector,
     engine: &Engine<R>,
 ) -> Option<PathBuf> {
-    match discover_images(wall_dir) {
+    match discover_images(wall_dir, engine.config.slideshow.recursive) {
         Ok(images) => {
             if let Err(e) = selector.update_images(images) {
                 tracing::warn!(error = %e, dir = %wall_dir.display(), "No wallpapers available; skipping cycle");
@@ -508,12 +528,32 @@ pub fn run_daemon_cycle<R: CommandRunner>(
 }
 
 /// Run the slideshow daemon loop until the process is killed.
-pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
+pub fn run_next<R: CommandRunner>(config: &Config, runner: &R, dry_run: bool) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
-    let images = discover_images(&wall_dir)?;
+    let images = discover_images(&wall_dir, config.slideshow.recursive)?;
     let state_path = last_image_state_path();
 
     let engine = Engine::new(config, runner);
+
+    if dry_run {
+        let history = load_history(&wall_dir).unwrap_or_default();
+        if let Some(image) = history.next().cloned() {
+            tracing::info!(image = %image.display(), "Dry-run next wallpaper from history");
+            engine.apply(&image)?;
+            return Ok(image);
+        }
+
+        let mut selector = match history.current_cloned() {
+            Some(last) => {
+                ImageSelector::with_last(images.clone(), config.slideshow.randomize, Some(last))?
+            }
+            None => ImageSelector::new(images.clone(), config.slideshow.randomize)?,
+        };
+        let image = selector.next().to_path_buf();
+        tracing::info!(image = %image.display(), "Dry-run next wallpaper");
+        engine.apply(&image)?;
+        return Ok(image);
+    }
 
     with_locked_history_from(&state_path, &wall_dir, |history| {
         if let Some(image) = history.next().cloned() {
@@ -538,12 +578,36 @@ pub fn run_next<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
     })
 }
 
-pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf> {
+pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R, dry_run: bool) -> Result<PathBuf> {
     let wall_dir = config.wallpaper_dir();
-    let images = discover_images(&wall_dir)?;
+    let images = discover_images(&wall_dir, config.slideshow.recursive)?;
     let state_path = last_image_state_path();
 
     let engine = Engine::new(config, runner);
+
+    if dry_run {
+        let history = load_history(&wall_dir).unwrap_or_default();
+        if let Some(image) = history.previous().cloned() {
+            tracing::info!(image = %image.display(), "Dry-run previous wallpaper from history");
+            engine.apply(&image)?;
+            return Ok(image);
+        }
+
+        if config.slideshow.randomize {
+            bail!("No previous wallpaper available in history");
+        }
+
+        let mut selector = match history.current_cloned() {
+            Some(last) => {
+                ImageSelector::with_last(images.clone(), config.slideshow.randomize, Some(last))?
+            }
+            None => ImageSelector::new(images.clone(), config.slideshow.randomize)?,
+        };
+        let image = selector.prev().to_path_buf();
+        tracing::info!(image = %image.display(), "Dry-run previous wallpaper");
+        engine.apply(&image)?;
+        return Ok(image);
+    }
 
     with_locked_history_from(&state_path, &wall_dir, |history| {
         if let Some(image) = history.previous().cloned() {
@@ -572,9 +636,13 @@ pub fn run_prev<R: CommandRunner>(config: &Config, runner: &R) -> Result<PathBuf
     })
 }
 
-pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result<()> {
+pub async fn run_daemon<R: CommandRunner>(
+    config: &Config,
+    runner: &R,
+    dry_run: bool,
+) -> Result<()> {
     let wall_dir = config.wallpaper_dir();
-    let images = discover_images(&wall_dir)?;
+    let images = discover_images(&wall_dir, config.slideshow.recursive)?;
 
     tracing::info!(
         count = images.len(),
@@ -596,6 +664,11 @@ pub async fn run_daemon<R: CommandRunner>(config: &Config, runner: &R) -> Result
     };
     let engine = Engine::new(config, runner);
     let interval = std::time::Duration::from_secs(config.slideshow.interval_seconds);
+
+    if dry_run {
+        let _ = run_daemon_cycle(&wall_dir, &mut selector, &engine);
+        return Ok(());
+    }
 
     loop {
         if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
@@ -736,7 +809,7 @@ mod tests {
     #[test]
     fn daemon_cycle_applies_next_image_after_refresh() {
         let dir = make_test_dir(&["a.jpg"]);
-        let images = discover_images(dir.path()).expect("discover initial images");
+        let images = discover_images(dir.path(), false).expect("discover initial images");
         let mut selector = ImageSelector::new(images, false).expect("build selector");
         let config = Config {
             backends: BackendsConfig {
@@ -761,7 +834,7 @@ mod tests {
     #[test]
     fn daemon_cycle_skips_when_refresh_finds_no_images() {
         let dir = make_test_dir(&["a.jpg"]);
-        let images = discover_images(dir.path()).expect("discover initial images");
+        let images = discover_images(dir.path(), false).expect("discover initial images");
         let mut selector = ImageSelector::new(images, false).expect("build selector");
         fs::remove_file(dir.path().join("a.jpg")).expect("remove image");
         let config = Config {
@@ -783,7 +856,7 @@ mod tests {
     #[test]
     fn daemon_cycle_continues_when_engine_apply_fails() {
         let dir = make_test_dir(&["a.jpg"]);
-        let images = discover_images(dir.path()).expect("discover initial images");
+        let images = discover_images(dir.path(), false).expect("discover initial images");
         let mut selector = ImageSelector::new(images, false).expect("build selector");
         let config = Config {
             backends: BackendsConfig {
@@ -804,11 +877,12 @@ mod tests {
     #[test]
     fn daemon_cycle_uses_swww_transition_duration_when_configured() {
         let dir = make_test_dir(&["a.jpg"]);
-        let images = discover_images(dir.path()).expect("discover initial images");
+        let images = discover_images(dir.path(), false).expect("discover initial images");
         let mut selector = ImageSelector::new(images, false).expect("build selector");
         let config = Config {
             slideshow: SlideshowConfig {
                 directory: dir.path().display().to_string(),
+                recursive: false,
                 ..Default::default()
             },
             backends: BackendsConfig {
@@ -866,7 +940,7 @@ mod tests {
             ".hidden.jpg",
         ]);
 
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
         let names: HashSet<String> = images
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
@@ -889,14 +963,14 @@ mod tests {
 
     #[test]
     fn discover_returns_error_for_missing_dir() {
-        let result = discover_images(Path::new("/nonexistent/dir"));
+        let result = discover_images(Path::new("/nonexistent/dir"), false);
         assert!(result.is_err());
     }
 
     #[test]
     fn discover_returns_empty_for_dir_with_no_images() {
         let dir = make_test_dir(&["readme.txt", "notes.md"]);
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
         assert!(images.is_empty());
     }
 
@@ -1343,7 +1417,7 @@ mod tests {
     fn discover_handles_mixed_case_extensions() {
         let dir = make_test_dir(&["upper.JPG", "mixed.Png", "weird.JpEg", "normal.webp"]);
 
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
         let names: HashSet<String> = images
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
@@ -1366,7 +1440,7 @@ mod tests {
         fs::create_dir(&sub).expect("mkdir");
         fs::write(sub.join("nested.png"), b"data").expect("write");
 
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
         let names: Vec<String> = images
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
@@ -1381,12 +1455,30 @@ mod tests {
         );
     }
 
+    #[test]
+    fn discover_recurses_subdirectories_when_enabled() {
+        let dir = make_test_dir(&["top.jpg"]);
+        let sub = dir.path().join("subdir");
+        fs::create_dir(&sub).expect("mkdir");
+        fs::write(sub.join("nested.png"), b"data").expect("write");
+
+        let images = discover_images(dir.path(), true).expect("should succeed");
+        let names: Vec<String> = images
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        assert_eq!(images.len(), 2);
+        assert!(names.contains(&"top.jpg".to_string()));
+        assert!(names.contains(&"nested.png".to_string()));
+    }
+
     // -- Files without extensions are skipped ---------------------------------
 
     #[test]
     fn discover_skips_files_without_extension() {
         let dir = make_test_dir(&["noext", "valid.jpg", "Makefile"]);
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
 
         assert_eq!(images.len(), 1);
         assert!(images[0].file_name().unwrap().to_str().unwrap() == "valid.jpg");
@@ -1397,7 +1489,7 @@ mod tests {
     #[test]
     fn discover_returns_sorted_results() {
         let dir = make_test_dir(&["z.jpg", "a.png", "m.webp", "b.jpeg"]);
-        let images = discover_images(dir.path()).expect("should succeed");
+        let images = discover_images(dir.path(), false).expect("should succeed");
         let names: Vec<String> = images
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
@@ -1445,7 +1537,7 @@ mod tests {
 
     #[test]
     fn discover_missing_dir_error_message_is_descriptive() {
-        let result = discover_images(Path::new("/nonexistent/wallpapers"));
+        let result = discover_images(Path::new("/nonexistent/wallpapers"), false);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
             err_msg.contains("/nonexistent/wallpapers"),

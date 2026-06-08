@@ -31,6 +31,7 @@ fn default_config_template() -> &'static str {
         "interval_seconds = 300\n",
         "randomize = true\n",
         "history_limit = 32\n\n",
+        "recursive = false\n\n",
         "[backends]\n",
         "colors = \"wallust\"\n",
         "wallpaper = \"swww\"\n\n",
@@ -64,6 +65,7 @@ mod tests {
         assert_eq!(loaded.slideshow.interval_seconds, 300);
         assert!(loaded.slideshow.randomize);
         assert_eq!(loaded.slideshow.history_limit, 32);
+        assert!(!loaded.slideshow.recursive);
         assert_eq!(loaded.commands.timeout_seconds, 30);
     }
 

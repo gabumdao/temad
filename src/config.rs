@@ -35,6 +35,8 @@ pub struct SlideshowConfig {
     pub randomize: bool,
 
     pub history_limit: usize,
+
+    pub recursive: bool,
 }
 
 impl Default for SlideshowConfig {
@@ -44,6 +46,7 @@ impl Default for SlideshowConfig {
             interval_seconds: 300,
             randomize: true,
             history_limit: 32,
+            recursive: false,
         }
     }
 }
@@ -264,6 +267,7 @@ directory = "~/Pictures/Walls"
 interval_seconds = 600
 randomize = false
 history_limit = 16
+recursive = true
 
 [backends]
 colors = "matugen"
@@ -291,6 +295,7 @@ timeout_seconds = 12
         assert_eq!(config.slideshow.interval_seconds, 600);
         assert!(!config.slideshow.randomize);
         assert_eq!(config.slideshow.history_limit, 16);
+        assert!(config.slideshow.recursive);
 
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Hyprpaper);
@@ -315,6 +320,7 @@ timeout_seconds = 12
         assert_eq!(config.slideshow.interval_seconds, 300);
         assert!(config.slideshow.randomize);
         assert_eq!(config.slideshow.history_limit, 32);
+        assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
         assert_eq!(config.commands.timeout_seconds, 30);
@@ -336,6 +342,7 @@ interval_seconds = 120
         assert_eq!(config.slideshow.directory, "~/Pictures/Wallpapers");
         assert!(config.slideshow.randomize);
         assert_eq!(config.slideshow.history_limit, 32);
+        assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
         assert_eq!(config.commands.timeout_seconds, 30);
@@ -412,6 +419,7 @@ directory = "/custom/walls"
 interval_seconds = 42
 randomize = false
 history_limit = 7
+recursive = true
 
 [backends]
 colors = "matugen"
@@ -431,6 +439,7 @@ timeout_seconds = 9
         assert_eq!(config.slideshow.interval_seconds, 42);
         assert!(!config.slideshow.randomize);
         assert_eq!(config.slideshow.history_limit, 7);
+        assert!(config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Wbg);
         assert_eq!(config.hooks.post_update, vec!["echo loaded"]);
@@ -444,6 +453,7 @@ timeout_seconds = 9
         assert_eq!(config.slideshow.interval_seconds, 300);
         assert!(config.slideshow.randomize);
         assert_eq!(config.slideshow.history_limit, 32);
+        assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.commands.timeout_seconds, 30);
     }

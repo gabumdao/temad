@@ -60,7 +60,10 @@ fn inspect_doctor<R: CommandRunner>(config_path: &Path, runner: &R) -> DoctorRep
             });
 
             let wall_dir = config.wallpaper_dir();
-            checks.push(check_wallpaper_directory(&wall_dir));
+            checks.push(check_wallpaper_directory(
+                &wall_dir,
+                config.slideshow.recursive,
+            ));
             checks.push(check_color_backend(&config.backends.colors, runner));
             checks.extend(check_wallpaper_backend(&config.backends.wallpaper, runner));
             checks.push(Check {
@@ -84,8 +87,8 @@ fn inspect_doctor<R: CommandRunner>(config_path: &Path, runner: &R) -> DoctorRep
     }
 }
 
-fn check_wallpaper_directory(path: &Path) -> Check {
-    match discover_images(path) {
+fn check_wallpaper_directory(path: &Path, recursive: bool) -> Check {
+    match discover_images(path, recursive) {
         Ok(images) if images.is_empty() => Check {
             label: "Wallpaper directory",
             level: CheckLevel::Fail,

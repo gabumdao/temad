@@ -14,6 +14,9 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
+    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
+    pub dry_run: bool,
+
     /// Set the verbosity level (repeat for more: -v, -vv, -vvv)
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
@@ -106,6 +109,14 @@ mod tests {
     fn init_command_parses() {
         let cli = Cli::try_parse_from(["temad", "init"]).expect("init should parse");
         assert!(matches!(cli.command, Command::Init));
+    }
+
+    #[test]
+    fn dry_run_flag_parses_globally() {
+        let cli =
+            Cli::try_parse_from(["temad", "--dry-run", "next"]).expect("dry-run should parse");
+        assert!(cli.dry_run);
+        assert!(matches!(cli.command, Command::Next));
     }
 
     #[test]

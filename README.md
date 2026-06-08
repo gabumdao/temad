@@ -138,6 +138,9 @@ randomize = true
 # Maximum number of wallpaper history entries to persist (default: 32).
 history_limit = 32
 
+# Recursively scan subdirectories for supported wallpaper files (default: false).
+recursive = false
+
 [backends]
 # Color extraction backend.
 # Supported: "wallust" (default), "matugen", "none"
@@ -187,6 +190,7 @@ post_update = [
 | `interval_seconds` | Integer | `300` | Seconds between wallpaper changes in daemon mode. |
 | `randomize` | Boolean | `true` | Random selection (`true`) or alphabetical cycling (`false`). |
 | `history_limit` | Integer | `32` | Maximum number of persisted wallpaper history entries. |
+| `recursive` | Boolean | `false` | Recursively scan subdirectories for supported wallpapers. |
 
 #### `[backends]`
 
@@ -272,6 +276,17 @@ temad doctor
 
 This runs non-mutating diagnostics for the resolved config path, wallpaper directory, selected backend binaries, and `swww-daemon` runtime state. It reports `OK`, `WARN`, and `FAIL` lines and exits non-zero only when required checks fail.
 
+### Preview Without Changing Anything
+
+```bash
+temad --dry-run set ~/Pictures/Wallpapers/sunset.jpg
+temad --dry-run next
+temad --dry-run prev
+temad --dry-run daemon
+```
+
+This resolves the wallpaper choice and prints the external commands `temad` would run, but does not apply wallpapers, execute hooks, or persist history updates. In `daemon` mode, dry-run previews a single cycle and exits.
+
 ### Inspect Persisted History
 
 ```bash
@@ -325,6 +340,7 @@ Commands:
 
 Options:
   -c, --config <CONFIG>  Path to a custom configuration file
+      --dry-run          Preview actions without changing wallpaper state
   -v, --verbose...       Set the verbosity level (-v, -vv, -vvv)
   -h, --help             Print help
   -V, --version          Print version
@@ -402,7 +418,7 @@ src/
 
 ## Testing
 
-The project includes **129 unit and integration tests** covering:
+The project includes **131 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)

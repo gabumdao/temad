@@ -17,6 +17,8 @@
 - [x] `temad status` added for non-mutating runtime/config inspection.
 - [x] `temad doctor` added for config, dependency, wallpaper directory, and daemon diagnostics.
 - [x] Persisted history writes made lock-safe and atomic.
+- [x] `temad history` added for read-only inspection of persisted wallpaper history.
+- [x] `temad init` added for first-run config bootstrap.
 
 ## In Progress
 
@@ -25,8 +27,6 @@
 ## Planned Next
 
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
-- [ ] Make history inspection user-facing via `temad history` or equivalent.
-- [ ] Add `temad init` for first-run config and service bootstrap.
 - [ ] Support optional recursive wallpaper discovery.
 - [ ] Support configurable history depth instead of a fixed internal limit.
 - [ ] Add optional command timeouts for external tools and hooks.

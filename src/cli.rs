@@ -33,6 +33,12 @@ pub enum Command {
     #[command(about = "Run non-mutating diagnostics for config and runtime dependencies")]
     Doctor,
 
+    #[command(about = "Inspect the persisted wallpaper history")]
+    History,
+
+    #[command(about = "Create a starter config file if one does not exist")]
+    Init,
+
     /// Immediately set a specific wallpaper and extract colors
     Set {
         /// Path to the wallpaper image file
@@ -71,6 +77,8 @@ mod tests {
         assert!(output.contains("set"));
         assert!(output.contains("status"));
         assert!(output.contains("doctor"));
+        assert!(output.contains("history"));
+        assert!(output.contains("init"));
         assert!(output.contains("next"));
         assert!(output.contains("prev"));
         assert!(output.contains("completions"));
@@ -86,6 +94,18 @@ mod tests {
     fn doctor_command_parses() {
         let cli = Cli::try_parse_from(["temad", "doctor"]).expect("doctor should parse");
         assert!(matches!(cli.command, Command::Doctor));
+    }
+
+    #[test]
+    fn history_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "history"]).expect("history should parse");
+        assert!(matches!(cli.command, Command::History));
+    }
+
+    #[test]
+    fn init_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "init"]).expect("init should parse");
+        assert!(matches!(cli.command, Command::Init));
     }
 
     #[test]

@@ -2,6 +2,8 @@ mod cli;
 mod config;
 mod doctor;
 mod engine;
+mod history;
+mod init;
 mod slideshow;
 mod status;
 
@@ -71,6 +73,11 @@ async fn main() -> Result<()> {
     let config_path = resolve_config_path(cli.config.as_deref());
     let runner = RealCommandRunner;
 
+    if let Command::Init = cli.command {
+        print!("{}", init::init_config(&config_path)?);
+        return Ok(());
+    }
+
     if let Command::Doctor = cli.command {
         let healthy = doctor::run_doctor(&config_path, &runner)?;
         if !healthy {
@@ -99,6 +106,10 @@ async fn main() -> Result<()> {
             print!("{report}");
         }
         Command::Doctor => unreachable!("handled before config load"),
+        Command::History => {
+            print!("{}", history::render_history(&config));
+        }
+        Command::Init => unreachable!("handled before config load"),
         Command::Set { ref path } => {
             let abs = validate_set_path(path)?;
 

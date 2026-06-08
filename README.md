@@ -258,6 +258,22 @@ temad doctor
 
 This runs non-mutating diagnostics for the resolved config path, wallpaper directory, selected backend binaries, and `swww-daemon` runtime state. It reports `OK`, `WARN`, and `FAIL` lines and exits non-zero only when required checks fail.
 
+### Inspect Persisted History
+
+```bash
+temad history
+```
+
+This prints the bounded wallpaper history currently persisted in XDG state, including the current entry marker when available. It is read-only and does not apply or rewrite wallpapers.
+
+### Bootstrap a Starter Config
+
+```bash
+temad init
+```
+
+This creates a starter `config.toml` at the resolved config path if one does not already exist. Re-running it is safe: existing config files are left untouched.
+
 ### Apply the Next Wallpaper
 
 ```bash
@@ -285,6 +301,8 @@ Commands:
   daemon       Start the background slideshow daemon
   status       Show the effective configuration and current wallpaper state
   doctor       Run non-mutating diagnostics for config and runtime dependencies
+  history      Inspect the persisted wallpaper history
+  init         Create a starter config file if one does not exist
   set          Immediately set a specific wallpaper and extract colors
   next         Apply the next wallpaper from the configured directory
   prev         Apply the previous wallpaper from the configured directory
@@ -360,6 +378,8 @@ src/
 ├── config.rs      # TOML configuration parsing & defaults
 ├── doctor.rs      # Non-mutating config and dependency diagnostics
 ├── engine.rs      # Color/wallpaper backends, hooks, CommandRunner trait
+├── history.rs     # Read-only persisted history reporting
+├── init.rs        # Starter config bootstrap
 ├── status.rs      # Non-mutating status reporting
 └── slideshow.rs   # Image discovery, selection, daemon loop
 ```
@@ -368,11 +388,12 @@ src/
 
 ## Testing
 
-The project includes **112 unit and integration tests** covering:
+The project includes **121 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
 - Path expansion (`~` to home directory)
 - Diagnostic reporting for config, dependencies, and daemon health
+- History inspection and config bootstrap commands
 - Image discovery and filtering
 - Lock-safe and atomic wallpaper history persistence
 - Status reporting and persisted state inspection

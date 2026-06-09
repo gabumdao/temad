@@ -411,7 +411,12 @@ src/
 ├── history.rs     # Read-only persisted history reporting
 ├── init.rs        # Starter config bootstrap
 ├── status.rs      # Non-mutating status reporting
-└── slideshow.rs   # Image discovery, selection, daemon loop
+├── slideshow.rs   # Facade for slideshow-related APIs
+└── slideshow/
+    ├── discovery.rs     # Wallpaper discovery and recursive scanning
+    ├── history_state.rs # Persisted history state and locking
+    ├── runtime.rs       # Daemon, next, and prev orchestration
+    └── selector.rs      # Image selection logic
 ```
 
 ---

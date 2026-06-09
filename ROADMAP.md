@@ -23,6 +23,7 @@
 - [x] Wallpaper history depth is now configurable.
 - [x] Recursive wallpaper scanning added.
 - [x] `--dry-run` preview mode added for mutating commands.
+- [x] `src/slideshow.rs` split into smaller internal modules.
 
 ## In Progress
 
@@ -33,7 +34,6 @@
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
 - [ ] Polish CLI help text and user-facing command wording, including `--dry-run` help output.
 - [ ] Consider better multi-monitor targeting for wallpaper backends.
-- [ ] Split large modules like `slideshow.rs` as the feature surface grows.
 
 ## Notes
 

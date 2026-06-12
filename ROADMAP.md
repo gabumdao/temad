@@ -32,8 +32,20 @@
 
 ## Planned Next
 
+- [ ] Add `temad reload` to force config/state reload without restarting the user session.
+- [ ] Add a remaining-time indicator for the next scheduled wallpaper change.
+- [ ] Add `temad pause` and `temad play` to pause and resume slideshow progression.
+- [ ] Add `temad interval` to update the active wallpaper interval through a command.
+- [ ] Reset the slideshow countdown when wallpaper is changed manually via `next` or `prev`.
+- [ ] Add lightweight timestamp metadata to wallpaper history entries.
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.
 - [ ] Polish CLI help text and user-facing command wording, including `--dry-run` help output.
+
+## Future High-Effort Features
+
+- [ ] Integrate with Wallhaven using guest and authenticated API modes, configured through `config.toml`, with local history support.
+- [ ] Add Wallhaven tag-driven wallpaper selection flows.
+- [ ] Build a network wallpaper provider service (Docker-friendly HTTP API), inspired by Wallhaven-style catalog and delivery workflows.
 
 ## Notes
 

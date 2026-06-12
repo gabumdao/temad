@@ -234,6 +234,12 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
             args.push(duration.to_string());
         }
 
+        let outputs = &self.config.wallpaper_targets.outputs;
+        if !outputs.is_empty() {
+            args.push("--outputs".to_string());
+            args.push(outputs.join(","));
+        }
+
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
 
         tracing::info!(backend = "swww", "Setting wallpaper");
@@ -285,16 +291,30 @@ impl<'a, R: CommandRunner> Engine<'a, R> {
         check_output("hyprpaper preload", &output)?;
 
         // Set the wallpaper on all monitors
-        let wallpaper_arg = format!(",{path}");
-        let output = self
-            .runner
-            .run("hyprctl", &["hyprpaper", "wallpaper", &wallpaper_arg])?;
-        check_output("hyprpaper wallpaper", &output)?;
+        let outputs = &self.config.wallpaper_targets.outputs;
+        if outputs.is_empty() {
+            let wallpaper_arg = format!(",{path}");
+            let output = self
+                .runner
+                .run("hyprctl", &["hyprpaper", "wallpaper", &wallpaper_arg])?;
+            check_output("hyprpaper wallpaper", &output)?;
+        } else {
+            for output_name in outputs {
+                let wallpaper_arg = format!("{output_name},{path}");
+                let output = self
+                    .runner
+                    .run("hyprctl", &["hyprpaper", "wallpaper", &wallpaper_arg])?;
+                check_output("hyprpaper wallpaper", &output)?;
+            }
+        }
 
         Ok(())
     }
 
     fn apply_wbg(&self, path: &str) -> Result<()> {
+        if !self.config.wallpaper_targets.outputs.is_empty() {
+            bail!("wbg does not support per-output wallpaper targeting");
+        }
         tracing::info!(backend = "wbg", "Setting wallpaper");
         let output = self.runner.run("wbg", &[path])?;
         check_output("wbg", &output)?;
@@ -397,7 +417,7 @@ fn shell_quote(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{BackendsConfig, Config, HooksConfig, SwwwOptions};
+    use crate::config::{BackendsConfig, Config, HooksConfig, SwwwOptions, WallpaperTargetsConfig};
     use std::os::unix::process::ExitStatusExt;
     use std::process::ExitStatus;
     use std::sync::Mutex;
@@ -582,6 +602,31 @@ mod tests {
     }
 
     #[test]
+    fn swww_with_outputs_adds_outputs_flag() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Swww,
+                ..Default::default()
+            },
+            wallpaper_targets: WallpaperTargetsConfig {
+                outputs: vec!["HDMI-A-1".to_string(), "DP-1".to_string()],
+            },
+            ..Default::default()
+        };
+        let runner = MockRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        engine
+            .apply_wallpaper("/tmp/wall.png")
+            .expect("should succeed");
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations[0].program, "swww");
+        assert!(invocations[0].args.contains(&"--outputs".to_string()));
+        assert!(invocations[0].args.contains(&"HDMI-A-1,DP-1".to_string()));
+    }
+
+    #[test]
     fn swww_starts_daemon_when_not_running() {
         let config = Config {
             backends: BackendsConfig {
@@ -638,6 +683,32 @@ mod tests {
     }
 
     #[test]
+    fn hyprpaper_targets_specific_outputs() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Hyprpaper,
+                ..Default::default()
+            },
+            wallpaper_targets: WallpaperTargetsConfig {
+                outputs: vec!["HDMI-A-1".to_string(), "DP-1".to_string()],
+            },
+            ..Default::default()
+        };
+        let runner = MockRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        engine
+            .apply_wallpaper("/tmp/wall.png")
+            .expect("should succeed");
+
+        let invocations = runner.invocations();
+        assert_eq!(invocations.len(), 3);
+        assert_eq!(invocations[0].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
+        assert_eq!(invocations[1].args, vec!["hyprpaper", "wallpaper", "HDMI-A-1,/tmp/wall.png"]);
+        assert_eq!(invocations[2].args, vec!["hyprpaper", "wallpaper", "DP-1,/tmp/wall.png"]);
+    }
+
+    #[test]
     fn wbg_generates_correct_command() {
         let config = Config {
             backends: BackendsConfig {
@@ -657,6 +728,26 @@ mod tests {
         assert_eq!(invocations.len(), 1);
         assert_eq!(invocations[0].program, "wbg");
         assert_eq!(invocations[0].args, vec!["/tmp/wall.png"]);
+    }
+
+    #[test]
+    fn wbg_rejects_output_targeting() {
+        let config = Config {
+            backends: BackendsConfig {
+                wallpaper: WallpaperBackend::Wbg,
+                ..Default::default()
+            },
+            wallpaper_targets: WallpaperTargetsConfig {
+                outputs: vec!["HDMI-A-1".to_string()],
+            },
+            ..Default::default()
+        };
+        let runner = MockRunner::new(true);
+        let engine = Engine::new(&config, &runner);
+
+        let result = engine.apply_wallpaper("/tmp/wall.png");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("wbg does not support"));
     }
 
     // -- Hooks tests ----------------------------------------------------------

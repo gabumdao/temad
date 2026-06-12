@@ -35,6 +35,8 @@ fn default_config_template() -> &'static str {
         "[backends]\n",
         "colors = \"wallust\"\n",
         "wallpaper = \"swww\"\n\n",
+        "[wallpaper_targets]\n",
+        "outputs = []\n\n",
         "[swww_options]\n",
         "transition_type = \"random\"\n",
         "transition_step = 100\n",

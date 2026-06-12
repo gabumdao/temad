@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 pub struct Config {
     pub slideshow: SlideshowConfig,
     pub backends: BackendsConfig,
+    pub wallpaper_targets: WallpaperTargetsConfig,
     pub swww_options: SwwwOptions,
     pub commands: CommandsConfig,
     pub hooks: HooksConfig,
@@ -87,6 +88,12 @@ impl Default for BackendsConfig {
             wallpaper: WallpaperBackend::Swww,
         }
     }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct WallpaperTargetsConfig {
+    pub outputs: Vec<String>,
 }
 
 /// Supported color extraction backends.
@@ -273,6 +280,9 @@ recursive = true
 colors = "matugen"
 wallpaper = "hyprpaper"
 
+[wallpaper_targets]
+outputs = ["HDMI-A-1", "DP-1"]
+
 [swww_options]
 transition_type = "fade"
 transition_step = 50
@@ -299,6 +309,10 @@ timeout_seconds = 12
 
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Hyprpaper);
+        assert_eq!(
+            config.wallpaper_targets.outputs,
+            vec!["HDMI-A-1".to_string(), "DP-1".to_string()]
+        );
 
         assert_eq!(config.swww_options.transition_type, "fade");
         assert_eq!(config.swww_options.transition_step, 50);
@@ -323,6 +337,7 @@ timeout_seconds = 12
         assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
+        assert!(config.wallpaper_targets.outputs.is_empty());
         assert_eq!(config.commands.timeout_seconds, 30);
         assert!(config.hooks.post_update.is_empty());
     }
@@ -345,6 +360,7 @@ interval_seconds = 120
         assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Swww);
+        assert!(config.wallpaper_targets.outputs.is_empty());
         assert_eq!(config.commands.timeout_seconds, 30);
     }
 
@@ -425,6 +441,9 @@ recursive = true
 colors = "matugen"
 wallpaper = "wbg"
 
+[wallpaper_targets]
+outputs = ["HDMI-A-1"]
+
 [hooks]
 post_update = ["echo loaded"]
 
@@ -442,6 +461,7 @@ timeout_seconds = 9
         assert!(config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Wbg);
+        assert_eq!(config.wallpaper_targets.outputs, vec!["HDMI-A-1".to_string()]);
         assert_eq!(config.hooks.post_update, vec!["echo loaded"]);
         assert_eq!(config.commands.timeout_seconds, 9);
     }
@@ -455,6 +475,7 @@ timeout_seconds = 9
         assert_eq!(config.slideshow.history_limit, 32);
         assert!(!config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Wallust);
+        assert!(config.wallpaper_targets.outputs.is_empty());
         assert_eq!(config.commands.timeout_seconds, 30);
     }
 

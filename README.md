@@ -150,6 +150,11 @@ colors = "wallust"
 # Supported: "swww" (default), "hyprpaper", "wbg"
 wallpaper = "swww"
 
+[wallpaper_targets]
+# Optional list of monitor/output names to target with the selected wallpaper.
+# Leave empty to target all outputs supported by the backend.
+outputs = []
+
 [swww_options]
 # These options are passed to `swww img` when the wallpaper backend is "swww".
 # See `swww img --help` for all available transition types.
@@ -198,6 +203,12 @@ post_update = [
 |---|---|---|---|
 | `colors` | String | `wallust` | `wallust`, `matugen`, `none` |
 | `wallpaper` | String | `swww` | `swww`, `hyprpaper`, `wbg` |
+
+#### `[wallpaper_targets]`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `outputs` | String array | `[]` | Optional monitor/output names to target. `swww` and `hyprpaper` support this; `wbg` does not. |
 
 #### `[commands]`
 
@@ -275,6 +286,8 @@ temad doctor
 ```
 
 This runs non-mutating diagnostics for the resolved config path, wallpaper directory, selected backend binaries, and `swww-daemon` runtime state. It reports `OK`, `WARN`, and `FAIL` lines and exits non-zero only when required checks fail.
+
+When `wallpaper_targets.outputs` is configured, `temad` applies the same selected image only to those outputs when the backend supports it.
 
 ### Preview Without Changing Anything
 
@@ -423,9 +436,10 @@ src/
 
 ## Testing
 
-The project includes **131 unit and integration tests** covering:
+The project includes **134 unit and integration tests** covering:
 
 - Configuration parsing, defaults, and edge cases
+- Multi-monitor backend targeting across supported wallpaper engines
 - Path expansion (`~` to home directory)
 - Diagnostic reporting for config, dependencies, and daemon health
 - History inspection and config bootstrap commands

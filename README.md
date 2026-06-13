@@ -273,6 +273,8 @@ This asks the running daemon for the resolved config path to reload its configur
 
 If no daemon is listening for that config path, `temad reload` exits with an error instead of silently starting a new daemon.
 
+If you replaced the `temad` binary after Hyprland started it with `exec-once`, the old daemon keeps running until you restart it. In that case `temad reload` cannot talk to the old process because it never created the control socket.
+
 ### Set a Specific Wallpaper
 
 ```bash
@@ -312,6 +314,16 @@ temad --dry-run reload
 This resolves the wallpaper choice and prints the external commands `temad` would run, but does not apply wallpapers, execute hooks, or persist history updates. In `daemon` mode, dry-run previews a single cycle and exits.
 
 For `reload`, dry-run validates the config and prints the control socket path it would contact, but does not connect to the daemon.
+
+If `reload` reports that no reload-capable daemon is listening, verify the running process and restart the daemon from the current binary:
+
+```bash
+pgrep -af temad
+readlink -f /proc/$(pgrep -xo temad)/exe
+ls /run/user/$(id -u)/temad
+pkill -x temad
+temad daemon
+```
 
 ### Inspect Persisted History
 

@@ -263,6 +263,16 @@ This starts the background loop that:
 
 > **Tip:** Add `exec temad daemon &` to your Hyprland config (`hyprland.conf`) or Sway config to auto-start on login.
 
+### Reload a Running Daemon
+
+```bash
+temad reload
+```
+
+This asks the running daemon for the resolved config path to reload its configuration and persisted wallpaper history without restarting the user session. A successful reload resets the slideshow countdown using the newly loaded interval.
+
+If no daemon is listening for that config path, `temad reload` exits with an error instead of silently starting a new daemon.
+
 ### Set a Specific Wallpaper
 
 ```bash
@@ -296,9 +306,12 @@ temad --dry-run set ~/Pictures/Wallpapers/sunset.jpg
 temad --dry-run next
 temad --dry-run prev
 temad --dry-run daemon
+temad --dry-run reload
 ```
 
 This resolves the wallpaper choice and prints the external commands `temad` would run, but does not apply wallpapers, execute hooks, or persist history updates. In `daemon` mode, dry-run previews a single cycle and exits.
+
+For `reload`, dry-run validates the config and prints the control socket path it would contact, but does not connect to the daemon.
 
 ### Inspect Persisted History
 
@@ -341,6 +354,7 @@ Usage: temad [OPTIONS] <COMMAND>
 
 Commands:
   daemon       Start the background slideshow daemon
+  reload       Ask a running daemon to reload config and state
   status       Show the effective configuration and current wallpaper state
   doctor       Run non-mutating diagnostics for config and runtime dependencies
   history      Inspect the persisted wallpaper history

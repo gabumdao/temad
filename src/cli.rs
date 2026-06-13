@@ -14,7 +14,12 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub config: Option<PathBuf>,
 
-    #[arg(long, action = clap::ArgAction::SetTrue, global = true)]
+    #[arg(
+        long,
+        action = clap::ArgAction::SetTrue,
+        global = true,
+        help = "Show what would happen without applying changes"
+    )]
     pub dry_run: bool,
 
     /// Set the verbosity level (repeat for more: -v, -vv, -vvv)
@@ -29,6 +34,9 @@ pub struct Cli {
 pub enum Command {
     /// Start the background slideshow daemon
     Daemon,
+
+    #[command(about = "Reload config and state in the running daemon")]
+    Reload,
 
     #[command(about = "Show the effective configuration and current wallpaper state")]
     Status,
@@ -77,6 +85,7 @@ mod tests {
 
         assert!(output.contains("temad"));
         assert!(output.contains("daemon"));
+        assert!(output.contains("reload"));
         assert!(output.contains("set"));
         assert!(output.contains("status"));
         assert!(output.contains("doctor"));
@@ -117,6 +126,12 @@ mod tests {
             Cli::try_parse_from(["temad", "--dry-run", "next"]).expect("dry-run should parse");
         assert!(cli.dry_run);
         assert!(matches!(cli.command, Command::Next));
+    }
+
+    #[test]
+    fn reload_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "reload"]).expect("reload should parse");
+        assert!(matches!(cli.command, Command::Reload));
     }
 
     #[test]

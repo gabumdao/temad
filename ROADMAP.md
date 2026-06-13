@@ -25,6 +25,7 @@
 - [x] `--dry-run` preview mode added for mutating commands.
 - [x] `src/slideshow.rs` split into smaller internal modules.
 - [x] Better multi-monitor backend targeting added.
+- [x] `temad reload` added to reload daemon config and persisted state without restarting the session.
 
 ## In Progress
 
@@ -32,7 +33,6 @@
 
 ## Planned Next
 
-- [ ] Add `temad reload` to force config/state reload without restarting the user session.
 - [ ] Add a remaining-time indicator for the next scheduled wallpaper change.
 - [ ] Add `temad pause` and `temad play` to pause and resume slideshow progression.
 - [ ] Add `temad interval` to update the active wallpaper interval through a command.

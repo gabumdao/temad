@@ -5,10 +5,12 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
+use tokio::time::{timeout, Duration};
 
 const SOCKET_DIR_NAME: &str = "temad";
 const SOCKET_PREFIX: &str = "control-";
 const SOCKET_SUFFIX: &str = ".sock";
+const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlCommand {
@@ -35,12 +37,23 @@ pub(crate) async fn request_reload(config_path: &Path) -> Result<String> {
 }
 
 async fn request_command(socket_path: &Path, command: &str) -> Result<String> {
-    let mut stream = UnixStream::connect(&socket_path).await.with_context(|| {
-        format!(
-            "Failed to connect to running temad daemon at {}",
-            socket_path.display()
-        )
-    })?;
+    let mut stream = match UnixStream::connect(&socket_path).await {
+        Ok(stream) => stream,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            bail!(
+                "No reload-capable temad daemon is listening at {}. If you recently upgraded temad or use a Hyprland exec-once daemon, restart `temad daemon` and try again.",
+                socket_path.display()
+            );
+        }
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "Failed to connect to running temad daemon at {}",
+                    socket_path.display()
+                )
+            });
+        }
+    };
 
     let request = format!("{command}\n");
     stream
@@ -144,6 +157,19 @@ pub(crate) async fn read_command(stream: &mut UnixStream) -> Result<ControlComma
     }
 
     parse_command(&line)
+}
+
+pub(crate) async fn read_command_with_timeout(stream: &mut UnixStream) -> Result<ControlCommand> {
+    read_command_within(stream, CONTROL_READ_TIMEOUT).await
+}
+
+async fn read_command_within(
+    stream: &mut UnixStream,
+    duration: Duration,
+) -> Result<ControlCommand> {
+    timeout(duration, read_command(stream))
+        .await
+        .map_err(|_| anyhow!("Timed out while waiting for a temad control command"))?
 }
 
 pub(crate) async fn respond_ok(stream: &mut UnixStream, message: &str) -> Result<()> {
@@ -325,5 +351,43 @@ mod tests {
         assert_eq!(response, "reloaded");
 
         server.await.expect("server task joins");
+    }
+
+    #[tokio::test]
+    async fn request_command_missing_socket_has_actionable_error() {
+        let socket_path = tempfile::tempdir()
+            .expect("tempdir")
+            .path()
+            .join("missing.sock");
+
+        let err = request_command(&socket_path, "reload")
+            .await
+            .expect_err("missing socket should fail");
+
+        let message = err.to_string();
+        assert!(message.contains("No reload-capable temad daemon is listening"));
+        assert!(message.contains("restart `temad daemon`"));
+    }
+
+    #[tokio::test]
+    async fn read_command_with_timeout_rejects_stalled_clients() {
+        let socket_dir = tempfile::tempdir().expect("tempdir");
+        let socket_path = socket_dir.path().join("control.sock");
+        let listener = UnixListener::bind(&socket_path).expect("bind socket");
+
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept connection");
+            read_command_within(&mut stream, Duration::from_millis(10))
+                .await
+                .expect_err("stalled client should time out")
+                .to_string()
+        });
+
+        let _client = UnixStream::connect(&socket_path)
+            .await
+            .expect("connect client");
+
+        let message = server.await.expect("server joins");
+        assert!(message.contains("Timed out while waiting for a temad control command"));
     }
 }

@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use tokio::time::{sleep_until, Duration, Instant};
 
 use crate::config::{load_config, Config};
-use crate::control::{read_command, respond_error, respond_ok, ControlCommand, ControlSocket};
+use crate::control::{
+    read_command_with_timeout, respond_error, respond_ok, ControlCommand, ControlSocket,
+};
 use crate::engine::{CommandRunner, Engine};
 
 use super::discovery::discover_images;
@@ -247,7 +249,7 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
             }
             accept_result = control_socket.accept() => {
                 let (mut stream, _) = accept_result?;
-                match read_command(&mut stream).await {
+                match read_command_with_timeout(&mut stream).await {
                     Ok(ControlCommand::Reload) => {
                         match load_config(config_path).and_then(DaemonState::from_config) {
                             Ok(reloaded_state) => {

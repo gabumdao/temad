@@ -703,9 +703,18 @@ mod tests {
 
         let invocations = runner.invocations();
         assert_eq!(invocations.len(), 3);
-        assert_eq!(invocations[0].args, vec!["hyprpaper", "preload", "/tmp/wall.png"]);
-        assert_eq!(invocations[1].args, vec!["hyprpaper", "wallpaper", "HDMI-A-1,/tmp/wall.png"]);
-        assert_eq!(invocations[2].args, vec!["hyprpaper", "wallpaper", "DP-1,/tmp/wall.png"]);
+        assert_eq!(
+            invocations[0].args,
+            vec!["hyprpaper", "preload", "/tmp/wall.png"]
+        );
+        assert_eq!(
+            invocations[1].args,
+            vec!["hyprpaper", "wallpaper", "HDMI-A-1,/tmp/wall.png"]
+        );
+        assert_eq!(
+            invocations[2].args,
+            vec!["hyprpaper", "wallpaper", "DP-1,/tmp/wall.png"]
+        );
     }
 
     #[test]
@@ -747,7 +756,10 @@ mod tests {
 
         let result = engine.apply_wallpaper("/tmp/wall.png");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("wbg does not support"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("wbg does not support"));
     }
 
     // -- Hooks tests ----------------------------------------------------------

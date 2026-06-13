@@ -461,7 +461,10 @@ timeout_seconds = 9
         assert!(config.slideshow.recursive);
         assert_eq!(config.backends.colors, ColorBackend::Matugen);
         assert_eq!(config.backends.wallpaper, WallpaperBackend::Wbg);
-        assert_eq!(config.wallpaper_targets.outputs, vec!["HDMI-A-1".to_string()]);
+        assert_eq!(
+            config.wallpaper_targets.outputs,
+            vec!["HDMI-A-1".to_string()]
+        );
         assert_eq!(config.hooks.post_update, vec!["echo loaded"]);
         assert_eq!(config.commands.timeout_seconds, 9);
     }

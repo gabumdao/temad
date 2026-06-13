@@ -1,5 +1,6 @@
 mod cli;
 mod config;
+mod control;
 mod doctor;
 mod engine;
 mod history;
@@ -16,6 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
+use crate::control::resolve_control_socket_path;
 use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
 fn init_logging(verbosity: u8) {
@@ -111,7 +113,23 @@ async fn main() -> Result<()> {
                 randomize = config.slideshow.randomize,
                 "Slideshow configuration"
             );
-            slideshow::run_daemon(&config, &runner, cli.dry_run).await?;
+            slideshow::run_daemon(&config_path, config, &runner, cli.dry_run).await?;
+        }
+        Command::Reload => {
+            let socket_path = resolve_control_socket_path(&config_path)?;
+            if cli.dry_run {
+                print!(
+                    "temad reload\nDry-run: config valid; would request reload via {}\n",
+                    socket_path.display()
+                );
+            } else {
+                let response = control::request_reload(&config_path).await?;
+                print!(
+                    "temad reload\nRequested daemon reload via {}\nResult: {}\n",
+                    socket_path.display(),
+                    response
+                );
+            }
         }
         Command::Status => {
             let report = status::render_status(&config_path, &config, &runner);

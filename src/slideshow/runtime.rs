@@ -1,12 +1,60 @@
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
+use tokio::time::{sleep_until, Duration, Instant};
 
-use crate::config::Config;
+use crate::config::{load_config, Config};
+use crate::control::{read_command, respond_error, respond_ok, ControlCommand, ControlSocket};
 use crate::engine::{CommandRunner, Engine};
 
 use super::discovery::discover_images;
-use super::history_state::{last_image_state_path, load_history, with_locked_history_from};
+use super::history_state::{
+    last_image_state_path, load_history, with_locked_history_from, HistoryState,
+};
 use super::selector::ImageSelector;
+
+struct DaemonState {
+    config: Config,
+    wall_dir: PathBuf,
+    selector: ImageSelector,
+    history: HistoryState,
+    interval: Duration,
+}
+
+impl DaemonState {
+    fn from_config(config: Config) -> Result<Self> {
+        let wall_dir = config.wallpaper_dir();
+        let images = discover_images(&wall_dir, config.slideshow.recursive)?;
+
+        tracing::info!(
+            count = images.len(),
+            dir = %wall_dir.display(),
+            "Image pool ready"
+        );
+
+        let history = match load_history(&wall_dir) {
+            Ok(history) => history,
+            Err(error) => {
+                tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
+                Default::default()
+            }
+        };
+
+        let selector = match history.current_cloned() {
+            Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
+            None => ImageSelector::new(images, config.slideshow.randomize)?,
+        };
+
+        let interval = Duration::from_secs(config.slideshow.interval_seconds);
+
+        Ok(Self {
+            config,
+            wall_dir,
+            selector,
+            history,
+            interval,
+        })
+    }
+}
 
 pub(crate) fn run_daemon_cycle<R: CommandRunner>(
     wall_dir: &Path,
@@ -154,54 +202,128 @@ pub(crate) fn run_prev<R: CommandRunner>(
 }
 
 pub(crate) async fn run_daemon<R: CommandRunner>(
-    config: &Config,
+    config_path: &Path,
+    config: Config,
     runner: &R,
     dry_run: bool,
 ) -> Result<()> {
-    let wall_dir = config.wallpaper_dir();
-    let images = discover_images(&wall_dir, config.slideshow.recursive)?;
-
-    tracing::info!(
-        count = images.len(),
-        dir = %wall_dir.display(),
-        "Image pool ready"
-    );
-
-    let mut history = match load_history(&wall_dir) {
-        Ok(history) => history,
-        Err(error) => {
-            tracing::warn!(error = %error, dir = %wall_dir.display(), "Failed to load wallpaper history state");
-            Default::default()
-        }
-    };
-
-    let mut selector = match history.current_cloned() {
-        Some(last) => ImageSelector::with_last(images, config.slideshow.randomize, Some(last))?,
-        None => ImageSelector::new(images, config.slideshow.randomize)?,
-    };
-    let engine = Engine::new(config, runner);
-    let interval = std::time::Duration::from_secs(config.slideshow.interval_seconds);
+    let mut state = DaemonState::from_config(config)?;
 
     if dry_run {
-        let _ = run_daemon_cycle(&wall_dir, &mut selector, &engine);
+        let engine = Engine::new(&state.config, runner);
+        let _ = run_daemon_cycle(&state.wall_dir, &mut state.selector, &engine);
         return Ok(());
     }
 
+    let control_socket = ControlSocket::bind(config_path)?;
+    tracing::info!(path = %control_socket.socket_path().display(), "temad control socket ready");
+
+    let mut next_tick = Instant::now();
+
     loop {
-        if let Some(image) = run_daemon_cycle(&wall_dir, &mut selector, &engine) {
-            history.record(image.clone(), config.slideshow.history_limit);
-            let latest_image = image.clone();
-            if let Err(error) =
-                with_locked_history_from(&last_image_state_path(), &wall_dir, |state| {
-                    state.record(latest_image.clone(), config.slideshow.history_limit);
-                    Ok(())
-                })
-            {
-                tracing::warn!(error = %error, path = %image.display(), "Failed to persist wallpaper history state");
+        let sleep = sleep_until(next_tick);
+        tokio::pin!(sleep);
+
+        tokio::select! {
+            _ = &mut sleep => {
+                let engine = Engine::new(&state.config, runner);
+                if let Some(image) = run_daemon_cycle(&state.wall_dir, &mut state.selector, &engine) {
+                    state.history.record(image.clone(), state.config.slideshow.history_limit);
+                    let latest_image = image.clone();
+                    if let Err(error) = with_locked_history_from(
+                        &last_image_state_path(),
+                        &state.wall_dir,
+                        |history| {
+                            history.record(latest_image.clone(), state.config.slideshow.history_limit);
+                            Ok(())
+                        },
+                    ) {
+                        tracing::warn!(error = %error, path = %image.display(), "Failed to persist wallpaper history state");
+                    }
+                }
+
+                tracing::debug!(seconds = state.config.slideshow.interval_seconds, "Sleeping");
+                next_tick = Instant::now() + state.interval;
+            }
+            accept_result = control_socket.accept() => {
+                let (mut stream, _) = accept_result?;
+                match read_command(&mut stream).await {
+                    Ok(ControlCommand::Reload) => {
+                        match load_config(config_path).and_then(DaemonState::from_config) {
+                            Ok(reloaded_state) => {
+                                state = reloaded_state;
+                                next_tick = Instant::now() + state.interval;
+                                tracing::info!(interval = state.config.slideshow.interval_seconds, dir = %state.wall_dir.display(), "Reloaded daemon config and state");
+                                respond_ok(&mut stream, "reloaded").await?;
+                            }
+                            Err(error) => {
+                                tracing::warn!(error = %error, "Failed to reload daemon config and state");
+                                respond_error(&mut stream, &error.to_string()).await?;
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "Failed to parse temad control command");
+                        respond_error(&mut stream, &error.to_string()).await?;
+                    }
+                }
             }
         }
+    }
+}
 
-        tracing::debug!(seconds = config.slideshow.interval_seconds, "Sleeping");
-        tokio::time::sleep(interval).await;
+#[cfg(test)]
+mod tests {
+    use super::DaemonState;
+    use crate::config::load_config;
+    use std::fs;
+    use tokio::time::Duration;
+
+    fn write_config(path: &std::path::Path, wall_dir: &std::path::Path, interval_seconds: u64) {
+        let config = format!(
+            "[slideshow]\ndirectory = \"{}\"\ninterval_seconds = {}\nrandomize = true\nhistory_limit = 32\nrecursive = false\n",
+            wall_dir.display(),
+            interval_seconds
+        );
+        fs::write(path, config).expect("write config");
+    }
+
+    #[test]
+    fn daemon_state_from_config_uses_current_wallpaper_dir_and_interval() {
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        let first_wall_dir = tempfile::tempdir().expect("tempdir");
+        let second_wall_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = config_dir.path().join("config.toml");
+
+        fs::write(first_wall_dir.path().join("one.jpg"), b"img").expect("write image");
+        fs::write(second_wall_dir.path().join("two.jpg"), b"img").expect("write image");
+
+        write_config(&config_path, first_wall_dir.path(), 15);
+        let initial = DaemonState::from_config(load_config(&config_path).expect("load config"))
+            .expect("build daemon state");
+
+        assert_eq!(initial.wall_dir, first_wall_dir.path());
+        assert_eq!(initial.interval, Duration::from_secs(15));
+
+        write_config(&config_path, second_wall_dir.path(), 45);
+        let reloaded = DaemonState::from_config(load_config(&config_path).expect("load config"))
+            .expect("rebuild daemon state");
+
+        assert_eq!(reloaded.wall_dir, second_wall_dir.path());
+        assert_eq!(reloaded.interval, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn daemon_state_reload_rejects_invalid_config() {
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = config_dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            "[slideshow]\ndirectory = \"/tmp\"\ninterval_seconds = 0\n",
+        )
+        .expect("write config");
+
+        let err = load_config(&config_path).expect_err("invalid config should fail");
+        assert!(err.to_string().contains("slideshow.interval_seconds"));
     }
 }

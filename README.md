@@ -4,6 +4,10 @@ A lightweight, highly efficient, and fully configurable **dynamic wallpaper and 
 
 Built for **Wayland** environments — specifically targeting compositors like [Hyprland](https://hyprland.org/) and [Sway](https://swaywm.org/).
 
+## Project Docs
+
+- [Roadmap](docs/ROADMAP.md)
+
 ---
 
 ## Features

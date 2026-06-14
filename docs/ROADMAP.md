@@ -27,6 +27,8 @@
 - [x] Better multi-monitor backend targeting added.
 - [x] `temad reload` added to reload daemon config and persisted state without restarting the session.
 - [x] Added a remaining-time indicator for the next scheduled wallpaper change.
+- [x] Added `temad pause` and `temad play` to pause and resume slideshow progression.
+- [x] Added `temad interval` to update the active wallpaper interval through a command.
 
 ## In Progress
 
@@ -34,8 +36,6 @@
 
 ## Planned Next
 
-- [ ] Add `temad pause` and `temad play` to pause and resume slideshow progression.
-- [ ] Add `temad interval` to update the active wallpaper interval through a command.
 - [ ] Reset the slideshow countdown when wallpaper is changed manually via `next` or `prev`.
 - [ ] Add lightweight timestamp metadata to wallpaper history entries.
 - [ ] Harden `swww-daemon` recovery around stale sockets and startup failures.

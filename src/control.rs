@@ -15,6 +15,7 @@ const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlCommand {
     Reload,
+    RemainingSeconds,
 }
 
 pub(crate) fn control_socket_path_for(runtime_dir: &Path, config_path: &Path) -> PathBuf {
@@ -34,6 +35,17 @@ pub(crate) fn resolve_control_socket_path(config_path: &Path) -> Result<PathBuf>
 pub(crate) async fn request_reload(config_path: &Path) -> Result<String> {
     let socket_path = resolve_control_socket_path(config_path)?;
     request_command(&socket_path, "reload").await
+}
+
+pub(crate) async fn request_remaining_seconds(config_path: &Path) -> Result<u64> {
+    let socket_path = resolve_control_socket_path(config_path)?;
+    let response = request_command(&socket_path, "remaining").await?;
+    response.parse::<u64>().with_context(|| {
+        format!(
+            "Failed to parse remaining-time response from temad daemon at {}",
+            socket_path.display()
+        )
+    })
 }
 
 async fn request_command(socket_path: &Path, command: &str) -> Result<String> {
@@ -200,6 +212,7 @@ pub(crate) async fn respond_error(stream: &mut UnixStream, message: &str) -> Res
 fn parse_command(line: &str) -> Result<ControlCommand> {
     match line.trim() {
         "reload" => Ok(ControlCommand::Reload),
+        "remaining" => Ok(ControlCommand::RemainingSeconds),
         other => bail!("Unsupported temad control command: {other}"),
     }
 }
@@ -314,6 +327,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_accepts_remaining() {
+        assert_eq!(
+            parse_command("remaining\n").expect("remaining parses"),
+            ControlCommand::RemainingSeconds
+        );
+    }
+
+    #[test]
     fn parse_response_accepts_ok() {
         let response = parse_response("ok reloaded\n").expect("ok response parses");
         assert_eq!(response, "reloaded");
@@ -349,6 +370,32 @@ mod tests {
             .await
             .expect("reload request succeeds");
         assert_eq!(response, "reloaded");
+
+        server.await.expect("server task joins");
+    }
+
+    #[tokio::test]
+    async fn request_remaining_seconds_round_trips_over_socket() {
+        let runtime_dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = config_dir.path().join("config.toml");
+        let socket_path = control_socket_path_for(runtime_dir.path(), &config_path);
+
+        fs::create_dir_all(socket_path.parent().expect("socket parent"))
+            .expect("create socket dir");
+
+        let listener = UnixListener::bind(&socket_path).expect("bind socket");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept connection");
+            let command = read_command(&mut stream).await.expect("read command");
+            assert_eq!(command, ControlCommand::RemainingSeconds);
+            respond_ok(&mut stream, "42").await.expect("write response");
+        });
+
+        let seconds = request_command(&socket_path, "remaining")
+            .await
+            .expect("remaining request succeeds");
+        assert_eq!(seconds, "42");
 
         server.await.expect("server task joins");
     }

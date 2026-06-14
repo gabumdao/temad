@@ -264,6 +264,10 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                             }
                         }
                     }
+                    Ok(ControlCommand::RemainingSeconds) => {
+                        let remaining = next_tick.saturating_duration_since(Instant::now()).as_secs();
+                        respond_ok(&mut stream, &remaining.to_string()).await?;
+                    }
                     Err(error) => {
                         tracing::warn!(error = %error, "Failed to parse temad control command");
                         respond_error(&mut stream, &error.to_string()).await?;

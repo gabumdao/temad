@@ -17,7 +17,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
-use crate::control::resolve_control_socket_path;
+use crate::control::{request_remaining_seconds, resolve_control_socket_path};
 use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
 fn init_logging(verbosity: u8) {
@@ -132,7 +132,13 @@ async fn main() -> Result<()> {
             }
         }
         Command::Status => {
-            let report = status::render_status(&config_path, &config, &runner);
+            let remaining_seconds = request_remaining_seconds(&config_path).await.ok();
+            let report = status::render_status_with_remaining(
+                &config_path,
+                &config,
+                &runner,
+                remaining_seconds,
+            );
             print!("{report}");
         }
         Command::Doctor => unreachable!("handled before config load"),

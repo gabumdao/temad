@@ -11,7 +11,12 @@ struct HistorySummary {
     entries: usize,
 }
 
-pub fn render_status<R: CommandRunner>(config_path: &Path, config: &Config, runner: &R) -> String {
+pub fn render_status_with_remaining<R: CommandRunner>(
+    config_path: &Path,
+    config: &Config,
+    runner: &R,
+    remaining_seconds: Option<u64>,
+) -> String {
     let wall_dir = config.wallpaper_dir();
     let history_path = history_state_path();
     let history = read_history_summary(&history_path, &wall_dir);
@@ -23,6 +28,7 @@ pub fn render_status<R: CommandRunner>(config_path: &Path, config: &Config, runn
         &wall_dir,
         &history_path,
         history,
+        remaining_seconds,
     )
 }
 
@@ -33,6 +39,7 @@ fn build_status_report<R: CommandRunner>(
     wall_dir: &Path,
     history_path: &Path,
     history: HistorySummary,
+    remaining_seconds: Option<u64>,
 ) -> String {
     let config_source = if config_path.exists() {
         "file"
@@ -58,6 +65,10 @@ fn build_status_report<R: CommandRunner>(
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "none".to_string());
 
+    let remaining = remaining_seconds
+        .map(format_remaining_seconds)
+        .unwrap_or_else(|| "n/a".to_string());
+
     format!(
         concat!(
             "temad status\n",
@@ -70,6 +81,7 @@ fn build_status_report<R: CommandRunner>(
             "Color backend: {}\n",
             "Wallpaper backend: {}\n",
             "swww-daemon running: {}\n",
+            "Time until next wallpaper: {}\n",
             "Post-update hooks: {}\n",
             "State file: {}\n",
             "History entries: {}\n",
@@ -84,11 +96,26 @@ fn build_status_report<R: CommandRunner>(
         color_backend_label(&config.backends.colors),
         wallpaper_backend_label(&config.backends.wallpaper),
         daemon_status,
+        remaining,
         config.hooks.post_update.len(),
         history_path.display(),
         history.entries,
         current_wallpaper,
     )
+}
+
+fn format_remaining_seconds(seconds: u64) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+
+    if hours > 0 {
+        format!("{hours}h {minutes}m {secs}s")
+    } else if minutes > 0 {
+        format!("{minutes}m {secs}s")
+    } else {
+        format!("{secs}s")
+    }
 }
 
 fn history_state_path() -> PathBuf {
@@ -264,6 +291,7 @@ mod tests {
                 current: Some(temp.path().join("two.png")),
                 entries: 3,
             },
+            Some(125),
         );
 
         assert!(report.contains("Config source: defaults"));
@@ -272,6 +300,7 @@ mod tests {
         assert!(report.contains("Color backend: wallust"));
         assert!(report.contains("Wallpaper backend: swww"));
         assert!(report.contains("swww-daemon running: yes"));
+        assert!(report.contains("Time until next wallpaper: 2m 5s"));
         assert!(report.contains("Post-update hooks: 2"));
         assert!(report.contains("History entries: 3"));
         assert!(report.contains("Current wallpaper: "));
@@ -302,11 +331,20 @@ mod tests {
                 current: None,
                 entries: 0,
             },
+            None,
         );
 
         assert!(report.contains("Wallpaper directory status: missing"));
         assert!(report.contains("Wallpaper backend: wbg"));
         assert!(report.contains("swww-daemon running: n/a"));
+        assert!(report.contains("Time until next wallpaper: n/a"));
         assert!(report.contains("Current wallpaper: none"));
+    }
+
+    #[test]
+    fn format_remaining_seconds_formats_hours_minutes_and_seconds() {
+        assert_eq!(format_remaining_seconds(5), "5s");
+        assert_eq!(format_remaining_seconds(125), "2m 5s");
+        assert_eq!(format_remaining_seconds(3723), "1h 2m 3s");
     }
 }

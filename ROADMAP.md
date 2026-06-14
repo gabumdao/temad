@@ -26,6 +26,7 @@
 - [x] `src/slideshow.rs` split into smaller internal modules.
 - [x] Better multi-monitor backend targeting added.
 - [x] `temad reload` added to reload daemon config and persisted state without restarting the session.
+- [x] Added a remaining-time indicator for the next scheduled wallpaper change.
 
 ## In Progress
 
@@ -33,7 +34,6 @@
 
 ## Planned Next
 
-- [ ] Add a remaining-time indicator for the next scheduled wallpaper change.
 - [ ] Add `temad pause` and `temad play` to pause and resume slideshow progression.
 - [ ] Add `temad interval` to update the active wallpaper interval through a command.
 - [ ] Reset the slideshow countdown when wallpaper is changed manually via `next` or `prev`.

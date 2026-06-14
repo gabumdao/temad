@@ -255,6 +255,10 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                     paused_remaining = Some(remaining.min(state.interval));
                     respond_ok(&mut stream, "interval updated").await?;
                 }
+                Ok(ControlCommand::ResetCountdown) => {
+                    paused_remaining = Some(state.interval);
+                    respond_ok(&mut stream, "countdown reset").await?;
+                }
                 Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
                     respond_ok(
                         &mut stream,
@@ -328,6 +332,10 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                         state.interval = Duration::from_secs(seconds);
                         next_tick = Instant::now() + state.interval;
                         respond_ok(&mut stream, "interval updated").await?;
+                    }
+                    Ok(ControlCommand::ResetCountdown) => {
+                        next_tick = Instant::now() + state.interval;
+                        respond_ok(&mut stream, "countdown reset").await?;
                     }
                     Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
                         let remaining = next_tick.saturating_duration_since(Instant::now()).as_secs();

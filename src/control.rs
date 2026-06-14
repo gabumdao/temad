@@ -18,6 +18,7 @@ pub(crate) enum ControlCommand {
     Pause,
     Play,
     SetInterval(u64),
+    ResetCountdown,
     RemainingSeconds,
     SchedulerStatus,
 }
@@ -67,6 +68,11 @@ pub(crate) async fn request_play(config_path: &Path) -> Result<String> {
 pub(crate) async fn request_set_interval(config_path: &Path, seconds: u64) -> Result<String> {
     let socket_path = resolve_control_socket_path(config_path)?;
     request_command(&socket_path, &format!("interval {seconds}")).await
+}
+
+pub(crate) async fn request_reset_countdown(config_path: &Path) -> Result<String> {
+    let socket_path = resolve_control_socket_path(config_path)?;
+    request_command(&socket_path, "reset-countdown").await
 }
 
 pub(crate) async fn request_scheduler_status(config_path: &Path) -> Result<SchedulerStatus> {
@@ -251,6 +257,7 @@ fn parse_command(line: &str) -> Result<ControlCommand> {
         Some("reload") if parts.next().is_none() => Ok(ControlCommand::Reload),
         Some("pause") if parts.next().is_none() => Ok(ControlCommand::Pause),
         Some("play") if parts.next().is_none() => Ok(ControlCommand::Play),
+        Some("reset-countdown") if parts.next().is_none() => Ok(ControlCommand::ResetCountdown),
         Some("remaining") if parts.next().is_none() => Ok(ControlCommand::RemainingSeconds),
         Some("scheduler-status") if parts.next().is_none() => Ok(ControlCommand::SchedulerStatus),
         Some("interval") => {
@@ -427,6 +434,14 @@ mod tests {
         assert_eq!(
             parse_command("play\n").expect("play parses"),
             ControlCommand::Play
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_reset_countdown() {
+        assert_eq!(
+            parse_command("reset-countdown\n").expect("reset countdown parses"),
+            ControlCommand::ResetCountdown
         );
     }
 

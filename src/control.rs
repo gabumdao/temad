@@ -15,7 +15,22 @@ const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(1);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlCommand {
     Reload,
+    Pause,
+    Play,
     RemainingSeconds,
+    SchedulerStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SchedulerState {
+    Running,
+    Paused,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SchedulerStatus {
+    pub(crate) state: SchedulerState,
+    pub(crate) remaining_seconds: u64,
 }
 
 pub(crate) fn control_socket_path_for(runtime_dir: &Path, config_path: &Path) -> PathBuf {
@@ -37,12 +52,26 @@ pub(crate) async fn request_reload(config_path: &Path) -> Result<String> {
     request_command(&socket_path, "reload").await
 }
 
-pub(crate) async fn request_remaining_seconds(config_path: &Path) -> Result<u64> {
+pub(crate) async fn request_pause(config_path: &Path) -> Result<String> {
     let socket_path = resolve_control_socket_path(config_path)?;
-    let response = request_command(&socket_path, "remaining").await?;
-    response.parse::<u64>().with_context(|| {
+    request_command(&socket_path, "pause").await
+}
+
+pub(crate) async fn request_play(config_path: &Path) -> Result<String> {
+    let socket_path = resolve_control_socket_path(config_path)?;
+    request_command(&socket_path, "play").await
+}
+
+pub(crate) async fn request_scheduler_status(config_path: &Path) -> Result<SchedulerStatus> {
+    let socket_path = resolve_control_socket_path(config_path)?;
+    request_scheduler_status_from_socket(&socket_path).await
+}
+
+async fn request_scheduler_status_from_socket(socket_path: &Path) -> Result<SchedulerStatus> {
+    let response = request_command(socket_path, "scheduler-status").await?;
+    parse_scheduler_status(&response).with_context(|| {
         format!(
-            "Failed to parse remaining-time response from temad daemon at {}",
+            "Failed to parse scheduler status response from temad daemon at {}",
             socket_path.display()
         )
     })
@@ -212,9 +241,36 @@ pub(crate) async fn respond_error(stream: &mut UnixStream, message: &str) -> Res
 fn parse_command(line: &str) -> Result<ControlCommand> {
     match line.trim() {
         "reload" => Ok(ControlCommand::Reload),
+        "pause" => Ok(ControlCommand::Pause),
+        "play" => Ok(ControlCommand::Play),
         "remaining" => Ok(ControlCommand::RemainingSeconds),
+        "scheduler-status" => Ok(ControlCommand::SchedulerStatus),
         other => bail!("Unsupported temad control command: {other}"),
     }
+}
+
+fn parse_scheduler_status(response: &str) -> Result<SchedulerStatus> {
+    let mut parts = response.split_whitespace();
+    let state = match parts.next() {
+        Some("running") => SchedulerState::Running,
+        Some("paused") => SchedulerState::Paused,
+        Some(other) => bail!("Unsupported scheduler state: {other}"),
+        None => bail!("Missing scheduler state"),
+    };
+
+    let remaining_seconds = parts
+        .next()
+        .context("Missing scheduler remaining seconds")?
+        .parse::<u64>()?;
+
+    if parts.next().is_some() {
+        bail!("Unexpected trailing scheduler status fields");
+    }
+
+    Ok(SchedulerStatus {
+        state,
+        remaining_seconds,
+    })
 }
 
 fn parse_response(line: &str) -> Result<String> {
@@ -335,6 +391,26 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_accepts_pause_and_play() {
+        assert_eq!(
+            parse_command("pause\n").expect("pause parses"),
+            ControlCommand::Pause
+        );
+        assert_eq!(
+            parse_command("play\n").expect("play parses"),
+            ControlCommand::Play
+        );
+    }
+
+    #[test]
+    fn parse_command_accepts_scheduler_status() {
+        assert_eq!(
+            parse_command("scheduler-status\n").expect("scheduler status parses"),
+            ControlCommand::SchedulerStatus
+        );
+    }
+
+    #[test]
     fn parse_response_accepts_ok() {
         let response = parse_response("ok reloaded\n").expect("ok response parses");
         assert_eq!(response, "reloaded");
@@ -344,6 +420,24 @@ mod tests {
     fn parse_response_rejects_error() {
         let err = parse_response("error invalid config\n").expect_err("error response fails");
         assert!(err.to_string().contains("invalid config"));
+    }
+
+    #[test]
+    fn parse_scheduler_status_accepts_running_and_paused() {
+        assert_eq!(
+            parse_scheduler_status("running 42").expect("running status parses"),
+            SchedulerStatus {
+                state: SchedulerState::Running,
+                remaining_seconds: 42,
+            }
+        );
+        assert_eq!(
+            parse_scheduler_status("paused 7").expect("paused status parses"),
+            SchedulerStatus {
+                state: SchedulerState::Paused,
+                remaining_seconds: 7,
+            }
+        );
     }
 
     #[tokio::test]
@@ -396,6 +490,40 @@ mod tests {
             .await
             .expect("remaining request succeeds");
         assert_eq!(seconds, "42");
+
+        server.await.expect("server task joins");
+    }
+
+    #[tokio::test]
+    async fn request_scheduler_status_round_trips_over_socket() {
+        let runtime_dir = tempfile::tempdir().expect("tempdir");
+        let config_dir = tempfile::tempdir().expect("tempdir");
+        let config_path = config_dir.path().join("config.toml");
+        let socket_path = control_socket_path_for(runtime_dir.path(), &config_path);
+
+        fs::create_dir_all(socket_path.parent().expect("socket parent"))
+            .expect("create socket dir");
+
+        let listener = UnixListener::bind(&socket_path).expect("bind socket");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept connection");
+            let command = read_command(&mut stream).await.expect("read command");
+            assert_eq!(command, ControlCommand::SchedulerStatus);
+            respond_ok(&mut stream, "paused 42")
+                .await
+                .expect("write response");
+        });
+
+        let status = request_scheduler_status_from_socket(&socket_path)
+            .await
+            .expect("scheduler status request succeeds");
+        assert_eq!(
+            status,
+            SchedulerStatus {
+                state: SchedulerState::Paused,
+                remaining_seconds: 42,
+            }
+        );
 
         server.await.expect("server task joins");
     }

@@ -221,8 +221,46 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
     tracing::info!(path = %control_socket.socket_path().display(), "temad control socket ready");
 
     let mut next_tick = Instant::now();
+    let mut paused_remaining: Option<Duration> = None;
 
     loop {
+        if let Some(remaining) = paused_remaining {
+            let (mut stream, _) = control_socket.accept().await?;
+            match read_command_with_timeout(&mut stream).await {
+                Ok(ControlCommand::Reload) => {
+                    match load_config(config_path).and_then(DaemonState::from_config) {
+                        Ok(reloaded_state) => {
+                            state = reloaded_state;
+                            paused_remaining = Some(remaining.min(state.interval));
+                            tracing::info!(interval = state.config.slideshow.interval_seconds, dir = %state.wall_dir.display(), "Reloaded daemon config and state while paused");
+                            respond_ok(&mut stream, "reloaded").await?;
+                        }
+                        Err(error) => {
+                            tracing::warn!(error = %error, "Failed to reload daemon config and state");
+                            respond_error(&mut stream, &error.to_string()).await?;
+                        }
+                    }
+                }
+                Ok(ControlCommand::Pause) => {
+                    respond_ok(&mut stream, "already paused").await?;
+                }
+                Ok(ControlCommand::Play) => {
+                    next_tick = Instant::now() + remaining;
+                    paused_remaining = None;
+                    respond_ok(&mut stream, "playing").await?;
+                }
+                Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
+                    respond_ok(&mut stream, &format!("paused {}", remaining.as_secs())).await?;
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "Failed to parse temad control command");
+                    respond_error(&mut stream, &error.to_string()).await?;
+                }
+            }
+
+            continue;
+        }
+
         let sleep = sleep_until(next_tick);
         tokio::pin!(sleep);
 
@@ -264,9 +302,16 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                             }
                         }
                     }
-                    Ok(ControlCommand::RemainingSeconds) => {
+                    Ok(ControlCommand::Pause) => {
+                        paused_remaining = Some(next_tick.saturating_duration_since(Instant::now()));
+                        respond_ok(&mut stream, "paused").await?;
+                    }
+                    Ok(ControlCommand::Play) => {
+                        respond_ok(&mut stream, "already running").await?;
+                    }
+                    Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
                         let remaining = next_tick.saturating_duration_since(Instant::now()).as_secs();
-                        respond_ok(&mut stream, &remaining.to_string()).await?;
+                        respond_ok(&mut stream, &format!("running {remaining}")).await?;
                     }
                     Err(error) => {
                         tracing::warn!(error = %error, "Failed to parse temad control command");

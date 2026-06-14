@@ -77,6 +77,10 @@ fn build_status_report<R: CommandRunner>(
         .map(|status| format_remaining_seconds(status.remaining_seconds))
         .unwrap_or_else(|| "n/a".to_string());
 
+    let active_interval = scheduler_status
+        .map(|status| status.interval_seconds.to_string())
+        .unwrap_or_else(|| "n/a".to_string());
+
     format!(
         concat!(
             "temad status\n",
@@ -85,6 +89,7 @@ fn build_status_report<R: CommandRunner>(
             "Wallpaper directory: {}\n",
             "Wallpaper directory status: {}\n",
             "Interval seconds: {}\n",
+            "Active interval seconds: {}\n",
             "Randomize: {}\n",
             "Color backend: {}\n",
             "Wallpaper backend: {}\n",
@@ -101,6 +106,7 @@ fn build_status_report<R: CommandRunner>(
         wall_dir.display(),
         directory_status,
         config.slideshow.interval_seconds,
+        active_interval,
         yes_no(config.slideshow.randomize),
         color_backend_label(&config.backends.colors),
         wallpaper_backend_label(&config.backends.wallpaper),
@@ -304,11 +310,13 @@ mod tests {
             Some(SchedulerStatus {
                 state: SchedulerState::Running,
                 remaining_seconds: 125,
+                interval_seconds: 120,
             }),
         );
 
         assert!(report.contains("Config source: defaults"));
         assert!(report.contains("Wallpaper directory status: ok (2 supported images)"));
+        assert!(report.contains("Active interval seconds: 120"));
         assert!(report.contains("Randomize: yes"));
         assert!(report.contains("Color backend: wallust"));
         assert!(report.contains("Wallpaper backend: swww"));
@@ -349,6 +357,7 @@ mod tests {
         );
 
         assert!(report.contains("Wallpaper directory status: missing"));
+        assert!(report.contains("Active interval seconds: n/a"));
         assert!(report.contains("Wallpaper backend: wbg"));
         assert!(report.contains("Slideshow state: n/a"));
         assert!(report.contains("swww-daemon running: n/a"));
@@ -372,9 +381,11 @@ mod tests {
             Some(SchedulerStatus {
                 state: SchedulerState::Paused,
                 remaining_seconds: 7,
+                interval_seconds: 30,
             }),
         );
 
+        assert!(report.contains("Active interval seconds: 30"));
         assert!(report.contains("Slideshow state: paused"));
         assert!(report.contains("Time until next wallpaper: 7s"));
     }

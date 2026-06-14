@@ -44,6 +44,9 @@ pub enum Command {
     #[command(about = "Resume slideshow progression in the running daemon")]
     Play,
 
+    #[command(about = "Update the active slideshow interval in the running daemon")]
+    Interval { seconds: u64 },
+
     #[command(about = "Show the effective configuration and current wallpaper state")]
     Status,
 
@@ -94,6 +97,7 @@ mod tests {
         assert!(output.contains("reload"));
         assert!(output.contains("pause"));
         assert!(output.contains("play"));
+        assert!(output.contains("interval"));
         assert!(output.contains("set"));
         assert!(output.contains("status"));
         assert!(output.contains("doctor"));
@@ -149,6 +153,12 @@ mod tests {
 
         assert!(matches!(pause.command, Command::Pause));
         assert!(matches!(play.command, Command::Play));
+    }
+
+    #[test]
+    fn interval_command_parses() {
+        let cli = Cli::try_parse_from(["temad", "interval", "45"]).expect("interval should parse");
+        assert!(matches!(cli.command, Command::Interval { seconds: 45 }));
     }
 
     #[test]

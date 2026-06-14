@@ -17,6 +17,7 @@ pub(crate) enum ControlCommand {
     Reload,
     Pause,
     Play,
+    SetInterval(u64),
     RemainingSeconds,
     SchedulerStatus,
 }
@@ -31,6 +32,7 @@ pub(crate) enum SchedulerState {
 pub(crate) struct SchedulerStatus {
     pub(crate) state: SchedulerState,
     pub(crate) remaining_seconds: u64,
+    pub(crate) interval_seconds: u64,
 }
 
 pub(crate) fn control_socket_path_for(runtime_dir: &Path, config_path: &Path) -> PathBuf {
@@ -60,6 +62,11 @@ pub(crate) async fn request_pause(config_path: &Path) -> Result<String> {
 pub(crate) async fn request_play(config_path: &Path) -> Result<String> {
     let socket_path = resolve_control_socket_path(config_path)?;
     request_command(&socket_path, "play").await
+}
+
+pub(crate) async fn request_set_interval(config_path: &Path, seconds: u64) -> Result<String> {
+    let socket_path = resolve_control_socket_path(config_path)?;
+    request_command(&socket_path, &format!("interval {seconds}")).await
 }
 
 pub(crate) async fn request_scheduler_status(config_path: &Path) -> Result<SchedulerStatus> {
@@ -239,13 +246,28 @@ pub(crate) async fn respond_error(stream: &mut UnixStream, message: &str) -> Res
 }
 
 fn parse_command(line: &str) -> Result<ControlCommand> {
-    match line.trim() {
-        "reload" => Ok(ControlCommand::Reload),
-        "pause" => Ok(ControlCommand::Pause),
-        "play" => Ok(ControlCommand::Play),
-        "remaining" => Ok(ControlCommand::RemainingSeconds),
-        "scheduler-status" => Ok(ControlCommand::SchedulerStatus),
-        other => bail!("Unsupported temad control command: {other}"),
+    let mut parts = line.split_whitespace();
+    match parts.next() {
+        Some("reload") if parts.next().is_none() => Ok(ControlCommand::Reload),
+        Some("pause") if parts.next().is_none() => Ok(ControlCommand::Pause),
+        Some("play") if parts.next().is_none() => Ok(ControlCommand::Play),
+        Some("remaining") if parts.next().is_none() => Ok(ControlCommand::RemainingSeconds),
+        Some("scheduler-status") if parts.next().is_none() => Ok(ControlCommand::SchedulerStatus),
+        Some("interval") => {
+            let seconds = parts
+                .next()
+                .context("Missing interval seconds")?
+                .parse::<u64>()?;
+            if seconds == 0 {
+                bail!("Interval seconds must be greater than 0");
+            }
+            if parts.next().is_some() {
+                bail!("Unexpected trailing interval arguments");
+            }
+            Ok(ControlCommand::SetInterval(seconds))
+        }
+        Some(other) => bail!("Unsupported temad control command: {other}"),
+        None => bail!("Missing temad control command"),
     }
 }
 
@@ -263,6 +285,11 @@ fn parse_scheduler_status(response: &str) -> Result<SchedulerStatus> {
         .context("Missing scheduler remaining seconds")?
         .parse::<u64>()?;
 
+    let interval_seconds = parts
+        .next()
+        .context("Missing scheduler interval seconds")?
+        .parse::<u64>()?;
+
     if parts.next().is_some() {
         bail!("Unexpected trailing scheduler status fields");
     }
@@ -270,6 +297,7 @@ fn parse_scheduler_status(response: &str) -> Result<SchedulerStatus> {
     Ok(SchedulerStatus {
         state,
         remaining_seconds,
+        interval_seconds,
     })
 }
 
@@ -403,6 +431,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_command_accepts_interval() {
+        assert_eq!(
+            parse_command("interval 45\n").expect("interval parses"),
+            ControlCommand::SetInterval(45)
+        );
+    }
+
+    #[test]
     fn parse_command_accepts_scheduler_status() {
         assert_eq!(
             parse_command("scheduler-status\n").expect("scheduler status parses"),
@@ -425,17 +461,19 @@ mod tests {
     #[test]
     fn parse_scheduler_status_accepts_running_and_paused() {
         assert_eq!(
-            parse_scheduler_status("running 42").expect("running status parses"),
+            parse_scheduler_status("running 42 300").expect("running status parses"),
             SchedulerStatus {
                 state: SchedulerState::Running,
                 remaining_seconds: 42,
+                interval_seconds: 300,
             }
         );
         assert_eq!(
-            parse_scheduler_status("paused 7").expect("paused status parses"),
+            parse_scheduler_status("paused 7 60").expect("paused status parses"),
             SchedulerStatus {
                 state: SchedulerState::Paused,
                 remaining_seconds: 7,
+                interval_seconds: 60,
             }
         );
     }
@@ -509,7 +547,7 @@ mod tests {
             let (mut stream, _) = listener.accept().await.expect("accept connection");
             let command = read_command(&mut stream).await.expect("read command");
             assert_eq!(command, ControlCommand::SchedulerStatus);
-            respond_ok(&mut stream, "paused 42")
+            respond_ok(&mut stream, "paused 42 60")
                 .await
                 .expect("write response");
         });
@@ -522,6 +560,7 @@ mod tests {
             SchedulerStatus {
                 state: SchedulerState::Paused,
                 remaining_seconds: 42,
+                interval_seconds: 60,
             }
         );
 

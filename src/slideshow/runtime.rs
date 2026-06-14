@@ -249,8 +249,22 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                     paused_remaining = None;
                     respond_ok(&mut stream, "playing").await?;
                 }
+                Ok(ControlCommand::SetInterval(seconds)) => {
+                    state.config.slideshow.interval_seconds = seconds;
+                    state.interval = Duration::from_secs(seconds);
+                    paused_remaining = Some(remaining.min(state.interval));
+                    respond_ok(&mut stream, "interval updated").await?;
+                }
                 Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
-                    respond_ok(&mut stream, &format!("paused {}", remaining.as_secs())).await?;
+                    respond_ok(
+                        &mut stream,
+                        &format!(
+                            "paused {} {}",
+                            remaining.as_secs(),
+                            state.config.slideshow.interval_seconds
+                        ),
+                    )
+                    .await?;
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, "Failed to parse temad control command");
@@ -309,9 +323,15 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                     Ok(ControlCommand::Play) => {
                         respond_ok(&mut stream, "already running").await?;
                     }
+                    Ok(ControlCommand::SetInterval(seconds)) => {
+                        state.config.slideshow.interval_seconds = seconds;
+                        state.interval = Duration::from_secs(seconds);
+                        next_tick = Instant::now() + state.interval;
+                        respond_ok(&mut stream, "interval updated").await?;
+                    }
                     Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
                         let remaining = next_tick.saturating_duration_since(Instant::now()).as_secs();
-                        respond_ok(&mut stream, &format!("running {remaining}")).await?;
+                        respond_ok(&mut stream, &format!("running {remaining} {}", state.config.slideshow.interval_seconds)).await?;
                     }
                     Err(error) => {
                         tracing::warn!(error = %error, "Failed to parse temad control command");

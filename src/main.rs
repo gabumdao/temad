@@ -18,7 +18,8 @@ use tracing_subscriber::EnvFilter;
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
 use crate::control::{
-    request_pause, request_play, request_scheduler_status, resolve_control_socket_path,
+    request_pause, request_play, request_scheduler_status, request_set_interval,
+    resolve_control_socket_path,
 };
 use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
@@ -160,6 +161,28 @@ async fn main() -> Result<()> {
                 let response = request_play(&config_path).await?;
                 print!(
                     "temad play\nRequested daemon play via {}\nResult: {}\n",
+                    socket_path.display(),
+                    response
+                );
+            }
+        }
+        Command::Interval { seconds } => {
+            if seconds == 0 {
+                bail!("Interval seconds must be greater than 0");
+            }
+
+            let socket_path = resolve_control_socket_path(&config_path)?;
+            if cli.dry_run {
+                print!(
+                    "temad interval\nDry-run: would request interval {} via {}\n",
+                    seconds,
+                    socket_path.display()
+                );
+            } else {
+                let response = request_set_interval(&config_path, seconds).await?;
+                print!(
+                    "temad interval\nRequested daemon interval {} via {}\nResult: {}\n",
+                    seconds,
                     socket_path.display(),
                     response
                 );

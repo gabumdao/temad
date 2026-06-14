@@ -17,7 +17,9 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
-use crate::control::{request_remaining_seconds, resolve_control_socket_path};
+use crate::control::{
+    request_pause, request_play, request_scheduler_status, resolve_control_socket_path,
+};
 use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
 fn init_logging(verbosity: u8) {
@@ -131,13 +133,45 @@ async fn main() -> Result<()> {
                 );
             }
         }
+        Command::Pause => {
+            let socket_path = resolve_control_socket_path(&config_path)?;
+            if cli.dry_run {
+                print!(
+                    "temad pause\nDry-run: would request pause via {}\n",
+                    socket_path.display()
+                );
+            } else {
+                let response = request_pause(&config_path).await?;
+                print!(
+                    "temad pause\nRequested daemon pause via {}\nResult: {}\n",
+                    socket_path.display(),
+                    response
+                );
+            }
+        }
+        Command::Play => {
+            let socket_path = resolve_control_socket_path(&config_path)?;
+            if cli.dry_run {
+                print!(
+                    "temad play\nDry-run: would request play via {}\n",
+                    socket_path.display()
+                );
+            } else {
+                let response = request_play(&config_path).await?;
+                print!(
+                    "temad play\nRequested daemon play via {}\nResult: {}\n",
+                    socket_path.display(),
+                    response
+                );
+            }
+        }
         Command::Status => {
-            let remaining_seconds = request_remaining_seconds(&config_path).await.ok();
+            let scheduler_status = request_scheduler_status(&config_path).await.ok();
             let report = status::render_status_with_remaining(
                 &config_path,
                 &config,
                 &runner,
-                remaining_seconds,
+                scheduler_status,
             );
             print!("{report}");
         }

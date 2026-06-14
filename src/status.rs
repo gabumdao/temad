@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::{ColorBackend, Config, WallpaperBackend};
+use crate::control::{SchedulerState, SchedulerStatus};
 use crate::engine::CommandRunner;
 use crate::slideshow::{discover_images, last_image_state_path};
 
@@ -15,7 +16,7 @@ pub fn render_status_with_remaining<R: CommandRunner>(
     config_path: &Path,
     config: &Config,
     runner: &R,
-    remaining_seconds: Option<u64>,
+    scheduler_status: Option<SchedulerStatus>,
 ) -> String {
     let wall_dir = config.wallpaper_dir();
     let history_path = history_state_path();
@@ -28,7 +29,7 @@ pub fn render_status_with_remaining<R: CommandRunner>(
         &wall_dir,
         &history_path,
         history,
-        remaining_seconds,
+        scheduler_status,
     )
 }
 
@@ -39,7 +40,7 @@ fn build_status_report<R: CommandRunner>(
     wall_dir: &Path,
     history_path: &Path,
     history: HistorySummary,
-    remaining_seconds: Option<u64>,
+    scheduler_status: Option<SchedulerStatus>,
 ) -> String {
     let config_source = if config_path.exists() {
         "file"
@@ -65,8 +66,15 @@ fn build_status_report<R: CommandRunner>(
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| "none".to_string());
 
-    let remaining = remaining_seconds
-        .map(format_remaining_seconds)
+    let slideshow_state = scheduler_status
+        .map(|status| match status.state {
+            SchedulerState::Running => "running".to_string(),
+            SchedulerState::Paused => "paused".to_string(),
+        })
+        .unwrap_or_else(|| "n/a".to_string());
+
+    let remaining = scheduler_status
+        .map(|status| format_remaining_seconds(status.remaining_seconds))
         .unwrap_or_else(|| "n/a".to_string());
 
     format!(
@@ -80,6 +88,7 @@ fn build_status_report<R: CommandRunner>(
             "Randomize: {}\n",
             "Color backend: {}\n",
             "Wallpaper backend: {}\n",
+            "Slideshow state: {}\n",
             "swww-daemon running: {}\n",
             "Time until next wallpaper: {}\n",
             "Post-update hooks: {}\n",
@@ -95,6 +104,7 @@ fn build_status_report<R: CommandRunner>(
         yes_no(config.slideshow.randomize),
         color_backend_label(&config.backends.colors),
         wallpaper_backend_label(&config.backends.wallpaper),
+        slideshow_state,
         daemon_status,
         remaining,
         config.hooks.post_update.len(),
@@ -291,7 +301,10 @@ mod tests {
                 current: Some(temp.path().join("two.png")),
                 entries: 3,
             },
-            Some(125),
+            Some(SchedulerStatus {
+                state: SchedulerState::Running,
+                remaining_seconds: 125,
+            }),
         );
 
         assert!(report.contains("Config source: defaults"));
@@ -299,6 +312,7 @@ mod tests {
         assert!(report.contains("Randomize: yes"));
         assert!(report.contains("Color backend: wallust"));
         assert!(report.contains("Wallpaper backend: swww"));
+        assert!(report.contains("Slideshow state: running"));
         assert!(report.contains("swww-daemon running: yes"));
         assert!(report.contains("Time until next wallpaper: 2m 5s"));
         assert!(report.contains("Post-update hooks: 2"));
@@ -336,9 +350,33 @@ mod tests {
 
         assert!(report.contains("Wallpaper directory status: missing"));
         assert!(report.contains("Wallpaper backend: wbg"));
+        assert!(report.contains("Slideshow state: n/a"));
         assert!(report.contains("swww-daemon running: n/a"));
         assert!(report.contains("Time until next wallpaper: n/a"));
         assert!(report.contains("Current wallpaper: none"));
+    }
+
+    #[test]
+    fn build_status_report_shows_paused_state() {
+        let config = Config::default();
+        let report = build_status_report(
+            Path::new("/tmp/temad.toml"),
+            &config,
+            &StatusRunner { running: false },
+            Path::new("/tmp/walls"),
+            Path::new("/tmp/state/last_image"),
+            HistorySummary {
+                current: None,
+                entries: 0,
+            },
+            Some(SchedulerStatus {
+                state: SchedulerState::Paused,
+                remaining_seconds: 7,
+            }),
+        );
+
+        assert!(report.contains("Slideshow state: paused"));
+        assert!(report.contains("Time until next wallpaper: 7s"));
     }
 
     #[test]

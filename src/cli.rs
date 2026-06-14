@@ -38,6 +38,12 @@ pub enum Command {
     #[command(about = "Reload config and state in the running daemon")]
     Reload,
 
+    #[command(about = "Pause slideshow progression in the running daemon")]
+    Pause,
+
+    #[command(about = "Resume slideshow progression in the running daemon")]
+    Play,
+
     #[command(about = "Show the effective configuration and current wallpaper state")]
     Status,
 
@@ -86,6 +92,8 @@ mod tests {
         assert!(output.contains("temad"));
         assert!(output.contains("daemon"));
         assert!(output.contains("reload"));
+        assert!(output.contains("pause"));
+        assert!(output.contains("play"));
         assert!(output.contains("set"));
         assert!(output.contains("status"));
         assert!(output.contains("doctor"));
@@ -132,6 +140,15 @@ mod tests {
     fn reload_command_parses() {
         let cli = Cli::try_parse_from(["temad", "reload"]).expect("reload should parse");
         assert!(matches!(cli.command, Command::Reload));
+    }
+
+    #[test]
+    fn pause_and_play_commands_parse() {
+        let pause = Cli::try_parse_from(["temad", "pause"]).expect("pause should parse");
+        let play = Cli::try_parse_from(["temad", "play"]).expect("play should parse");
+
+        assert!(matches!(pause.command, Command::Pause));
+        assert!(matches!(play.command, Command::Play));
     }
 
     #[test]

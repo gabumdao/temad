@@ -18,8 +18,8 @@ use tracing_subscriber::EnvFilter;
 use crate::cli::{Cli, Command};
 use crate::config::{load_config, resolve_config_path};
 use crate::control::{
-    request_pause, request_play, request_scheduler_status, request_set_interval,
-    resolve_control_socket_path,
+    request_pause, request_play, request_reset_countdown, request_scheduler_status,
+    request_set_interval, resolve_control_socket_path,
 };
 use crate::engine::{AppCommandRunner, DryRunCommandRunner, Engine, RealCommandRunner};
 
@@ -221,10 +221,20 @@ async fn main() -> Result<()> {
         }
         Command::Next => {
             let image = slideshow::run_next(&config, &runner, cli.dry_run)?;
+            if !cli.dry_run {
+                if let Err(error) = request_reset_countdown(&config_path).await {
+                    tracing::warn!(error = %error, "Failed to reset daemon countdown after next");
+                }
+            }
             tracing::info!(path = %image.display(), "Applied next wallpaper");
         }
         Command::Prev => {
             let image = slideshow::run_prev(&config, &runner, cli.dry_run)?;
+            if !cli.dry_run {
+                if let Err(error) = request_reset_countdown(&config_path).await {
+                    tracing::warn!(error = %error, "Failed to reset daemon countdown after prev");
+                }
+            }
             tracing::info!(path = %image.display(), "Applied previous wallpaper");
         }
         Command::Completions { .. } => unreachable!("handled before config load"),

@@ -284,6 +284,14 @@ temad play
 
 `temad pause` freezes slideshow progression inside the running daemon without changing the current wallpaper. `temad play` resumes progression from the frozen remaining time instead of resetting the full interval.
 
+### Update the Active Interval
+
+```bash
+temad interval 45
+```
+
+This updates the active slideshow interval inside the running daemon without rewriting `config.toml`. If the slideshow is running, the countdown resets from now using the new interval. If it is paused, the frozen remaining time is clamped to the new interval and resumes from there when you run `temad play`.
+
 ### Set a Specific Wallpaper
 
 ```bash
@@ -303,6 +311,8 @@ This prints the effective config path, whether defaults are in use, wallpaper di
 When a reload-capable daemon is running, `temad status` also shows the time remaining until the next scheduled wallpaper change. If no daemon is listening, that field is reported as `n/a`.
 
 When pause/play support is available, `temad status` also reports the slideshow state as `running` or `paused`.
+
+When interval control is available, `temad status` also shows `Active interval seconds`, which may differ from the configured interval until the daemon is restarted or reloaded.
 
 ### Run Diagnostics
 
@@ -382,6 +392,7 @@ Commands:
   reload       Ask a running daemon to reload config and state
   pause        Pause slideshow progression in the running daemon
   play         Resume slideshow progression in the running daemon
+  interval     Update the active slideshow interval in the running daemon
   status       Show the effective configuration and current wallpaper state
   doctor       Run non-mutating diagnostics for config and runtime dependencies
   history      Inspect the persisted wallpaper history

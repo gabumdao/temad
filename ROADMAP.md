@@ -52,3 +52,5 @@
 - `temad status` is intentionally human-readable in phase 1.
 - CI currently targets the existing single-crate Rust CLI workflow.
 - The README should remain the user-facing usage guide; this file is the execution roadmap.
+- After replacing the installed binary, Hyprland `exec-once` users must restart `temad daemon` once so the live process matches the new executable and binds the current control socket.
+- Quick recovery checks after upgrades: `pgrep -af temad`, `readlink -f /proc/$(pgrep -xo temad)/exe`, `ls /run/user/$(id -u)/temad`, then restart the daemon if the process still points to a deleted binary or no socket is present.

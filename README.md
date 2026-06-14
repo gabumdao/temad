@@ -291,6 +291,8 @@ temad status
 
 This prints the effective config path, whether defaults are in use, wallpaper directory health, slideshow mode, configured backends, `swww-daemon` availability when relevant, and a summary of the persisted history state including the current wallpaper when known.
 
+When a reload-capable daemon is running, `temad status` also shows the time remaining until the next scheduled wallpaper change. If no daemon is listening, that field is reported as `n/a`.
+
 ### Run Diagnostics
 
 ```bash

@@ -96,8 +96,20 @@ fn encode_history_entry(wall_dir: &Path, image: &Path) -> String {
         .to_string()
 }
 
-fn decode_history_entry(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
+/// Decode both plain paths and older timestamp-prefixed entries:
+/// `@<unix-seconds>\\t<path>`. The timestamp is metadata, not part of the filename.
+pub(crate) fn decode_history_entry(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
     let value = raw.trim();
+    let value = match value.split_once('\t') {
+        Some((prefix, file))
+            if prefix
+                .strip_prefix('@')
+                .is_some_and(|timestamp| timestamp.parse::<u64>().is_ok()) =>
+        {
+            file
+        }
+        _ => value,
+    };
     if value.is_empty() {
         return None;
     }
@@ -307,4 +319,45 @@ pub(crate) fn persist_last_image(
 
 pub(crate) fn load_history(wall_dir: &Path) -> Result<HistoryState> {
     load_history_from(&last_image_state_path(), wall_dir)
+}
+
+#[cfg(test)]
+mod timestamp_compat_tests {
+    use super::*;
+
+    #[test]
+    fn parses_timestamped_history_without_treating_timestamp_as_filename() {
+        let state = decode_history_state(
+            Path::new("/wallpapers"),
+            "1\n@1792937864\twallhaven-wqlxpx.jpg\nwallhaven-m9lp89.jpg\n",
+        );
+        assert_eq!(state.cursor, 1);
+        assert_eq!(
+            state.entries,
+            vec![
+                PathBuf::from("/wallpapers/wallhaven-wqlxpx.jpg"),
+                PathBuf::from("/wallpapers/wallhaven-m9lp89.jpg"),
+            ]
+        );
+        assert_eq!(
+            state.previous(),
+            Some(&PathBuf::from("/wallpapers/wallhaven-wqlxpx.jpg"))
+        );
+    }
+
+    #[test]
+    fn timestamped_absolute_path_is_preserved() {
+        assert_eq!(
+            decode_history_entry(Path::new("/wallpapers"), "@1792937864\t/elsewhere/a.png"),
+            Some(PathBuf::from("/elsewhere/a.png"))
+        );
+    }
+
+    #[test]
+    fn non_timestamp_prefix_is_treated_as_literal_filename() {
+        assert_eq!(
+            decode_history_entry(Path::new("/wallpapers"), "@abc\timage.jpg"),
+            Some(PathBuf::from("/wallpapers/@abc\timage.jpg"))
+        );
+    }
 }

@@ -269,7 +269,10 @@ mod tests {
             "1\n@1792937864\twallhaven-wqlxpx.jpg\nwallhaven-m9lp89.jpg\n",
         );
         assert_eq!(summary.entries, 2);
-        assert_eq!(summary.current, Some(PathBuf::from("/walls/wallhaven-m9lp89.jpg")));
+        assert_eq!(
+            summary.current,
+            Some(PathBuf::from("/walls/wallhaven-m9lp89.jpg"))
+        );
     }
 
     #[test]

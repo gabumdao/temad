@@ -48,6 +48,11 @@ impl ImageSelector {
         self.last.as_deref().unwrap()
     }
 
+    /// Synchronize selection with the last wallpaper applied by another process.
+    pub fn sync_last(&mut self, last: Option<PathBuf>) {
+        self.last = last.filter(|candidate| self.images.iter().any(|path| path == candidate));
+    }
+
     pub fn update_images(&mut self, images: Vec<PathBuf>) -> Result<()> {
         if images.is_empty() {
             bail!("No wallpaper images found in the configured directory");

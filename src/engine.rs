@@ -1423,6 +1423,17 @@ mod tests {
     }
 
     #[test]
+    fn real_runner_drains_large_subprocess_output() {
+        let runner = RealCommandRunner::new(Duration::from_secs(5));
+        let output = runner
+            .run_shell("head -c 1500000 /dev/zero; head -c 1500000 /dev/zero >&2")
+            .expect("large output should not deadlock");
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), OUTPUT_LIMIT);
+        assert_eq!(output.stderr.len(), OUTPUT_LIMIT);
+    }
+
+    #[test]
     fn real_runner_allows_short_shell_command() {
         let runner = TimeoutOnlyRunner::new(Duration::from_secs(1));
 

@@ -360,6 +360,10 @@ temad history
 
 This prints the bounded wallpaper history currently persisted in XDG state, including the current entry marker when available. It is read-only and does not apply or rewrite wallpapers.
 
+The state file (`$XDG_STATE_HOME/temad/last_image`, normally `~/.local/state/temad/last_image`) stores a zero-based cursor on its first line, followed by timestamped history entries in the original `@<unix-seconds><TAB><image-path>` format. Timestamps represent when an image was **added to history** after a successful apply; navigating with `prev` / `next` retains each entry's original timestamp. `set` and automatic slideshow changes create timestamped entries as well.
+
+Older plain-path entries remain readable. If they have already lost their timestamps, Temad leaves those timestamps unknown rather than inventing dates; newly recorded entries always receive a real Unix timestamp. No automatic cleanup or deletion of existing history takes place.
+
 ### Bootstrap a Starter Config
 
 ```bash

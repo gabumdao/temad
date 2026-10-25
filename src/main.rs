@@ -217,6 +217,9 @@ async fn main() -> Result<()> {
                 ) {
                     tracing::warn!(error = %error, path = %abs.display(), "Failed to persist last wallpaper state");
                 }
+                if let Err(error) = request_reset_countdown(&config_path).await {
+                    tracing::debug!(error = %error, "No active daemon to synchronize after set");
+                }
             }
         }
         Command::Next => {

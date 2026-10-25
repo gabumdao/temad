@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::config::{ColorBackend, Config, WallpaperBackend};
 use crate::control::{SchedulerState, SchedulerStatus};
 use crate::engine::CommandRunner;
-use crate::slideshow::{discover_images, last_image_state_path};
+use crate::slideshow::{decode_history_entry, discover_images, last_image_state_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HistorySummary {
@@ -187,20 +187,6 @@ fn parse_history_summary(wall_dir: &Path, raw: &str) -> HistorySummary {
     }
 }
 
-fn decode_history_entry(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
-    let value = raw.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    let path = PathBuf::from(value);
-    Some(if path.is_absolute() {
-        path
-    } else {
-        wall_dir.join(path)
-    })
-}
-
 fn color_backend_label(backend: &ColorBackend) -> &'static str {
     match backend {
         ColorBackend::Wallust => "wallust",
@@ -274,6 +260,19 @@ mod tests {
 
         assert_eq!(summary.entries, 1);
         assert_eq!(summary.current, Some(wall_dir.join("legacy.png")));
+    }
+
+    #[test]
+    fn parse_history_summary_decodes_timestamp_metadata() {
+        let summary = parse_history_summary(
+            Path::new("/walls"),
+            "1\n@1792937864\twallhaven-wqlxpx.jpg\nwallhaven-m9lp89.jpg\n",
+        );
+        assert_eq!(summary.entries, 2);
+        assert_eq!(
+            summary.current,
+            Some(PathBuf::from("/walls/wallhaven-m9lp89.jpg"))
+        );
     }
 
     #[test]

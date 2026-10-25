@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::config::Config;
-use crate::slideshow::last_image_state_path;
+use crate::slideshow::{decode_history_entry, last_image_state_path};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HistorySnapshot {
@@ -100,20 +100,6 @@ fn parse_history_snapshot(wall_dir: &Path, raw: &str) -> HistorySnapshot {
     }
 }
 
-fn decode_history_entry(wall_dir: &Path, raw: &str) -> Option<PathBuf> {
-    let value = raw.trim();
-    if value.is_empty() {
-        return None;
-    }
-
-    let path = PathBuf::from(value);
-    Some(if path.is_absolute() {
-        path
-    } else {
-        wall_dir.join(path)
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,6 +123,23 @@ mod tests {
 
         assert_eq!(snapshot.current, Some(0));
         assert_eq!(snapshot.entries, vec![wall_dir.join("legacy.png")]);
+    }
+
+    #[test]
+    fn parse_history_snapshot_supports_timestamped_entries() {
+        let wall_dir = Path::new("/walls");
+        let snapshot = parse_history_snapshot(
+            wall_dir,
+            "1\n@1792937864\twallhaven-wqlxpx.jpg\nwallhaven-m9lp89.jpg\n",
+        );
+        assert_eq!(snapshot.current, Some(1));
+        assert_eq!(
+            snapshot.entries,
+            vec![
+                wall_dir.join("wallhaven-wqlxpx.jpg"),
+                wall_dir.join("wallhaven-m9lp89.jpg")
+            ]
+        );
     }
 
     #[test]

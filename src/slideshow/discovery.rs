@@ -42,14 +42,19 @@ fn collect_images(directory: &Path, recursive: bool, images: &mut Vec<PathBuf>) 
             Err(_) => continue,
         };
         let path = entry.path();
-        if path.is_dir() {
+        // Do not follow directory symlinks: they can form infinite cycles.
+        let file_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), error = %error, "Skipping unreadable entry");
+                continue;
+            }
+        };
+        if file_type.is_dir() {
             if recursive {
                 collect_images(&path, recursive, images)?;
             }
-            continue;
-        }
-
-        if is_supported_image_path(&path) {
+        } else if is_supported_image_path(&path) {
             images.push(path);
         }
     }

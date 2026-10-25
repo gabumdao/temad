@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use std::io::{self, Read};
 use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
@@ -33,6 +34,22 @@ pub struct RealCommandRunner {
     timeout: Duration,
 }
 
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+
+fn read_pipe<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        let remaining = OUTPUT_LIMIT.saturating_sub(captured.len());
+        captured.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    Ok(captured)
+}
+
 pub struct DryRunCommandRunner;
 
 pub enum AppCommandRunner {
@@ -51,15 +68,14 @@ impl RealCommandRunner {
             .stderr(Stdio::piped())
             .spawn()
             .with_context(|| format!("Failed to execute: {label}"))?;
-
+        let out = child.stdout.take().context("Missing stdout pipe")?;
+        let err = child.stderr.take().context("Missing stderr pipe")?;
+        let stdout_reader = thread::spawn(move || read_pipe(out));
+        let stderr_reader = thread::spawn(move || read_pipe(err));
         let started = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => {
-                    return child
-                        .wait_with_output()
-                        .with_context(|| format!("Failed to collect output: {label}"));
-                }
+                Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() >= self.timeout => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -73,7 +89,18 @@ impl RealCommandRunner {
                         .with_context(|| format!("Failed while waiting for: {label}"));
                 }
             }
-        }
+        };
+        let stdout = stdout_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("stdout reader panicked"))??;
+        let stderr = stderr_reader
+            .join()
+            .map_err(|_| anyhow::anyhow!("stderr reader panicked"))??;
+        Ok(Output {
+            status,
+            stdout,
+            stderr,
+        })
     }
 }
 
@@ -1407,6 +1434,17 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("timed out"));
+    }
+
+    #[test]
+    fn real_runner_drains_large_subprocess_output() {
+        let runner = RealCommandRunner::new(Duration::from_secs(5));
+        let output = runner
+            .run_shell("head -c 1500000 /dev/zero; head -c 1500000 /dev/zero >&2")
+            .expect("large output should not deadlock");
+        assert!(output.status.success());
+        assert_eq!(output.stdout.len(), OUTPUT_LIMIT);
+        assert_eq!(output.stderr.len(), OUTPUT_LIMIT);
     }
 
     #[test]

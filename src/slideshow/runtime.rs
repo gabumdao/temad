@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use std::path::{Path, PathBuf};
+use tokio::net::UnixStream;
 use tokio::time::{sleep_until, Duration, Instant};
 
 use crate::config::{load_config, Config};
@@ -9,20 +10,24 @@ use crate::control::{
 use crate::engine::{CommandRunner, Engine};
 
 use super::discovery::discover_images;
-use super::history_state::{
-    last_image_state_path, load_history, with_locked_history_from, HistoryState,
-};
+use super::history_state::{last_image_state_path, load_history, with_locked_history_from};
 use super::selector::ImageSelector;
 
 struct DaemonState {
     config: Config,
     wall_dir: PathBuf,
     selector: ImageSelector,
-    history: HistoryState,
     interval: Duration,
 }
 
 impl DaemonState {
+    fn sync_last_from_disk(&mut self) {
+        match load_history(&self.wall_dir) {
+            Ok(history) => self.selector.sync_last(history.current_cloned()),
+            Err(error) => tracing::warn!(error = %error, "Failed to reload wallpaper history"),
+        }
+    }
+
     fn from_config(config: Config) -> Result<Self> {
         let wall_dir = config.wallpaper_dir();
         let images = discover_images(&wall_dir, config.slideshow.recursive)?;
@@ -52,7 +57,6 @@ impl DaemonState {
             config,
             wall_dir,
             selector,
-            history,
             interval,
         })
     }
@@ -203,6 +207,21 @@ pub(crate) fn run_prev<R: CommandRunner>(
     })
 }
 
+// A disconnected IPC client must not terminate the daemon.
+async fn reply_ok(stream: &mut UnixStream, message: &str) -> Result<()> {
+    if let Err(error) = respond_ok(stream, message).await {
+        tracing::warn!(error = %error, "Control client disconnected");
+    }
+    Ok(())
+}
+
+async fn reply_error(stream: &mut UnixStream, message: &str) -> Result<()> {
+    if let Err(error) = respond_error(stream, message).await {
+        tracing::warn!(error = %error, "Control client disconnected");
+    }
+    Ok(())
+}
+
 pub(crate) async fn run_daemon<R: CommandRunner>(
     config_path: &Path,
     config: Config,
@@ -233,34 +252,35 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                             state = reloaded_state;
                             paused_remaining = Some(remaining.min(state.interval));
                             tracing::info!(interval = state.config.slideshow.interval_seconds, dir = %state.wall_dir.display(), "Reloaded daemon config and state while paused");
-                            respond_ok(&mut stream, "reloaded").await?;
+                            reply_ok(&mut stream, "reloaded").await?;
                         }
                         Err(error) => {
                             tracing::warn!(error = %error, "Failed to reload daemon config and state");
-                            respond_error(&mut stream, &error.to_string()).await?;
+                            reply_error(&mut stream, &error.to_string()).await?;
                         }
                     }
                 }
                 Ok(ControlCommand::Pause) => {
-                    respond_ok(&mut stream, "already paused").await?;
+                    reply_ok(&mut stream, "already paused").await?;
                 }
                 Ok(ControlCommand::Play) => {
                     next_tick = Instant::now() + remaining;
                     paused_remaining = None;
-                    respond_ok(&mut stream, "playing").await?;
+                    reply_ok(&mut stream, "playing").await?;
                 }
                 Ok(ControlCommand::SetInterval(seconds)) => {
                     state.config.slideshow.interval_seconds = seconds;
                     state.interval = Duration::from_secs(seconds);
                     paused_remaining = Some(remaining.min(state.interval));
-                    respond_ok(&mut stream, "interval updated").await?;
+                    reply_ok(&mut stream, "interval updated").await?;
                 }
                 Ok(ControlCommand::ResetCountdown) => {
+                    state.sync_last_from_disk();
                     paused_remaining = Some(state.interval);
-                    respond_ok(&mut stream, "countdown reset").await?;
+                    reply_ok(&mut stream, "countdown reset").await?;
                 }
                 Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
-                    respond_ok(
+                    reply_ok(
                         &mut stream,
                         &format!(
                             "paused {} {}",
@@ -272,7 +292,7 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                 }
                 Err(error) => {
                     tracing::warn!(error = %error, "Failed to parse temad control command");
-                    respond_error(&mut stream, &error.to_string()).await?;
+                    reply_error(&mut stream, &error.to_string()).await?;
                 }
             }
 
@@ -284,9 +304,9 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
 
         tokio::select! {
             _ = &mut sleep => {
+                state.sync_last_from_disk();
                 let engine = Engine::new(&state.config, runner);
                 if let Some(image) = run_daemon_cycle(&state.wall_dir, &mut state.selector, &engine) {
-                    state.history.record(image.clone(), state.config.slideshow.history_limit);
                     let latest_image = image.clone();
                     if let Err(error) = with_locked_history_from(
                         &last_image_state_path(),
@@ -312,38 +332,39 @@ pub(crate) async fn run_daemon<R: CommandRunner>(
                                 state = reloaded_state;
                                 next_tick = Instant::now() + state.interval;
                                 tracing::info!(interval = state.config.slideshow.interval_seconds, dir = %state.wall_dir.display(), "Reloaded daemon config and state");
-                                respond_ok(&mut stream, "reloaded").await?;
+                                reply_ok(&mut stream, "reloaded").await?;
                             }
                             Err(error) => {
                                 tracing::warn!(error = %error, "Failed to reload daemon config and state");
-                                respond_error(&mut stream, &error.to_string()).await?;
+                                reply_error(&mut stream, &error.to_string()).await?;
                             }
                         }
                     }
                     Ok(ControlCommand::Pause) => {
                         paused_remaining = Some(next_tick.saturating_duration_since(Instant::now()));
-                        respond_ok(&mut stream, "paused").await?;
+                        reply_ok(&mut stream, "paused").await?;
                     }
                     Ok(ControlCommand::Play) => {
-                        respond_ok(&mut stream, "already running").await?;
+                        reply_ok(&mut stream, "already running").await?;
                     }
                     Ok(ControlCommand::SetInterval(seconds)) => {
                         state.config.slideshow.interval_seconds = seconds;
                         state.interval = Duration::from_secs(seconds);
                         next_tick = Instant::now() + state.interval;
-                        respond_ok(&mut stream, "interval updated").await?;
+                        reply_ok(&mut stream, "interval updated").await?;
                     }
                     Ok(ControlCommand::ResetCountdown) => {
+                        state.sync_last_from_disk();
                         next_tick = Instant::now() + state.interval;
-                        respond_ok(&mut stream, "countdown reset").await?;
+                        reply_ok(&mut stream, "countdown reset").await?;
                     }
                     Ok(ControlCommand::RemainingSeconds | ControlCommand::SchedulerStatus) => {
                         let remaining = next_tick.saturating_duration_since(Instant::now()).as_secs();
-                        respond_ok(&mut stream, &format!("running {remaining} {}", state.config.slideshow.interval_seconds)).await?;
+                        reply_ok(&mut stream, &format!("running {remaining} {}", state.config.slideshow.interval_seconds)).await?;
                     }
                     Err(error) => {
                         tracing::warn!(error = %error, "Failed to parse temad control command");
-                        respond_error(&mut stream, &error.to_string()).await?;
+                        reply_error(&mut stream, &error.to_string()).await?;
                     }
                 }
             }

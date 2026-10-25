@@ -11,6 +11,7 @@ const SOCKET_DIR_NAME: &str = "temad";
 const SOCKET_PREFIX: &str = "control-";
 const SOCKET_SUFFIX: &str = ".sock";
 const CONTROL_READ_TIMEOUT: Duration = Duration::from_secs(1);
+const CONTROL_RESPONSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ControlCommand {
@@ -128,12 +129,15 @@ async fn request_command(socket_path: &Path, command: &str) -> Result<String> {
 
     let mut response = String::new();
     let mut reader = BufReader::new(stream);
-    let read = reader.read_line(&mut response).await.with_context(|| {
-        format!(
-            "Failed to read reload response from temad daemon at {}",
-            socket_path.display()
-        )
-    })?;
+    let read = timeout(CONTROL_RESPONSE_TIMEOUT, reader.read_line(&mut response))
+        .await
+        .map_err(|_| anyhow!("Timed out waiting for temad control response"))?
+        .with_context(|| {
+            format!(
+                "Failed to read reload response from temad daemon at {}",
+                socket_path.display()
+            )
+        })?;
 
     if read == 0 {
         bail!(

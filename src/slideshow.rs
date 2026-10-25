@@ -427,7 +427,7 @@ mod tests {
             dir.path(),
             &HistoryState {
                 cursor: 0,
-                entries: vec![image.clone()],
+                entries: vec![image.clone().into()],
             },
         )
         .expect("persist state");
@@ -469,7 +469,7 @@ mod tests {
             dir.path(),
             &HistoryState {
                 cursor: 0,
-                entries: vec![dir.path().join("a.jpg")],
+                entries: vec![dir.path().join("a.jpg").into()],
             },
         )
         .expect("persist history");
@@ -515,7 +515,7 @@ mod tests {
         let loaded = load_history_from(&state_path, wall_dir.path()).expect("load history");
         assert_eq!(loaded.entries.len(), 8);
 
-        let unique: HashSet<PathBuf> = loaded.entries.iter().cloned().collect();
+        let unique: HashSet<PathBuf> = loaded.entries.iter().map(|entry| entry.path.clone()).collect();
         assert_eq!(
             unique.len(),
             8,
@@ -528,9 +528,9 @@ mod tests {
         let mut history = HistoryState {
             cursor: 1,
             entries: vec![
-                PathBuf::from("/img/a.jpg"),
-                PathBuf::from("/img/b.jpg"),
-                PathBuf::from("/img/c.jpg"),
+                PathBuf::from("/img/a.jpg").into(),
+                PathBuf::from("/img/b.jpg").into(),
+                PathBuf::from("/img/c.jpg").into(),
             ],
         };
 
@@ -551,7 +551,7 @@ mod tests {
     fn history_record_skips_duplicate_current_image() {
         let mut history = HistoryState {
             cursor: 0,
-            entries: vec![PathBuf::from("/img/a.jpg")],
+            entries: vec![PathBuf::from("/img/a.jpg").into()],
         };
 
         history.record(PathBuf::from("/img/a.jpg"), 32);
@@ -579,7 +579,7 @@ mod tests {
     fn history_prepend_previous_respects_configured_limit() {
         let mut history = HistoryState {
             cursor: 1,
-            entries: vec![PathBuf::from("/img/b.jpg"), PathBuf::from("/img/c.jpg")],
+            entries: vec![PathBuf::from("/img/b.jpg").into(), PathBuf::from("/img/c.jpg").into()],
         };
 
         history.prepend_previous(PathBuf::from("/img/a.jpg"), 2);
@@ -608,9 +608,9 @@ mod tests {
         let mut history = HistoryState {
             cursor: 2,
             entries: vec![
-                PathBuf::from("/img/a.jpg"),
-                PathBuf::from("/img/b.jpg"),
-                PathBuf::from("/img/c.jpg"),
+                PathBuf::from("/img/a.jpg").into(),
+                PathBuf::from("/img/b.jpg").into(),
+                PathBuf::from("/img/c.jpg").into(),
             ],
         };
 

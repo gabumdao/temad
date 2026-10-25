@@ -135,7 +135,10 @@ mod tests {
         assert_eq!(snapshot.current, Some(1));
         assert_eq!(
             snapshot.entries,
-            vec![wall_dir.join("wallhaven-wqlxpx.jpg"), wall_dir.join("wallhaven-m9lp89.jpg")]
+            vec![
+                wall_dir.join("wallhaven-wqlxpx.jpg"),
+                wall_dir.join("wallhaven-m9lp89.jpg")
+            ]
         );
     }
 

@@ -133,11 +133,11 @@ async fn request_command(socket_path: &Path, command: &str) -> Result<String> {
         .await
         .map_err(|_| anyhow!("Timed out waiting for temad control response"))?
         .with_context(|| {
-        format!(
-            "Failed to read reload response from temad daemon at {}",
-            socket_path.display()
-        )
-    })?;
+            format!(
+                "Failed to read reload response from temad daemon at {}",
+                socket_path.display()
+            )
+        })?;
 
     if read == 0 {
         bail!(

@@ -10,9 +10,7 @@ use crate::control::{
 use crate::engine::{CommandRunner, Engine};
 
 use super::discovery::discover_images;
-use super::history_state::{
-    last_image_state_path, load_history, with_locked_history_from,
-};
+use super::history_state::{last_image_state_path, load_history, with_locked_history_from};
 use super::selector::ImageSelector;
 
 struct DaemonState {

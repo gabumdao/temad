@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use std::os::unix::process::ExitStatusExt;
+use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::thread;
@@ -33,6 +34,20 @@ pub struct RealCommandRunner {
     timeout: Duration,
 }
 
+const OUTPUT_LIMIT: usize = 1024 * 1024;
+
+fn read_pipe<R: Read>(mut reader: R) -> io::Result<Vec<u8>> {
+    let mut captured = Vec::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 { break; }
+        let remaining = OUTPUT_LIMIT.saturating_sub(captured.len());
+        captured.extend_from_slice(&buffer[..count.min(remaining)]);
+    }
+    Ok(captured)
+}
+
 pub struct DryRunCommandRunner;
 
 pub enum AppCommandRunner {
@@ -46,20 +61,16 @@ impl RealCommandRunner {
     }
 
     fn run_command(&self, mut command: Command, label: &str) -> Result<Output> {
-        let mut child = command
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .with_context(|| format!("Failed to execute: {label}"))?;
-
+        let mut child = command.stdout(Stdio::piped()).stderr(Stdio::piped())
+            .spawn().with_context(|| format!("Failed to execute: {label}"))?;
+        let out = child.stdout.take().context("Missing stdout pipe")?;
+        let err = child.stderr.take().context("Missing stderr pipe")?;
+        let stdout_reader = thread::spawn(move || read_pipe(out));
+        let stderr_reader = thread::spawn(move || read_pipe(err));
         let started = Instant::now();
-        loop {
+        let status = loop {
             match child.try_wait() {
-                Ok(Some(_)) => {
-                    return child
-                        .wait_with_output()
-                        .with_context(|| format!("Failed to collect output: {label}"));
-                }
+                Ok(Some(status)) => break status,
                 Ok(None) if started.elapsed() >= self.timeout => {
                     let _ = child.kill();
                     let _ = child.wait();
@@ -69,11 +80,13 @@ impl RealCommandRunner {
                 Err(error) => {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err(error)
-                        .with_context(|| format!("Failed while waiting for: {label}"));
+                    return Err(error).with_context(|| format!("Failed while waiting for: {label}"));
                 }
             }
-        }
+        };
+        let stdout = stdout_reader.join().map_err(|_| anyhow::anyhow!("stdout reader panicked"))??;
+        let stderr = stderr_reader.join().map_err(|_| anyhow::anyhow!("stderr reader panicked"))??;
+        Ok(Output { status, stdout, stderr })
     }
 }
 

@@ -469,10 +469,7 @@ mod timestamp_persistence_tests {
     #[test]
     fn history_truncation_preserves_timestamps_of_retained_entries() {
         let dir = Path::new("/walls");
-        let mut state = decode_history_state(
-            dir,
-            "1\n@100\ta.jpg\n@200\tb.jpg\n@300\tc.jpg\n",
-        );
+        let mut state = decode_history_state(dir, "1\n@100\ta.jpg\n@200\tb.jpg\n@300\tc.jpg\n");
         state.record(dir.join("d.jpg"), 3);
         assert_eq!(state.entries[0].applied_at, Some(100));
         assert_eq!(state.entries[1].applied_at, Some(200));

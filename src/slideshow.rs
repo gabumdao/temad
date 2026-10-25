@@ -4,7 +4,7 @@ mod runtime;
 mod selector;
 
 pub(crate) use discovery::{discover_images, is_supported_image_path};
-pub(crate) use history_state::{last_image_state_path, persist_last_image};
+pub(crate) use history_state::{decode_history_entry, last_image_state_path, persist_last_image};
 pub(crate) use runtime::{run_daemon, run_next, run_prev};
 
 #[cfg(test)]

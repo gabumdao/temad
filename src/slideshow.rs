@@ -515,7 +515,11 @@ mod tests {
         let loaded = load_history_from(&state_path, wall_dir.path()).expect("load history");
         assert_eq!(loaded.entries.len(), 8);
 
-        let unique: HashSet<PathBuf> = loaded.entries.iter().map(|entry| entry.path.clone()).collect();
+        let unique: HashSet<PathBuf> = loaded
+            .entries
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
         assert_eq!(
             unique.len(),
             8,
@@ -579,7 +583,10 @@ mod tests {
     fn history_prepend_previous_respects_configured_limit() {
         let mut history = HistoryState {
             cursor: 1,
-            entries: vec![PathBuf::from("/img/b.jpg").into(), PathBuf::from("/img/c.jpg").into()],
+            entries: vec![
+                PathBuf::from("/img/b.jpg").into(),
+                PathBuf::from("/img/c.jpg").into(),
+            ],
         };
 
         history.prepend_previous(PathBuf::from("/img/a.jpg"), 2);

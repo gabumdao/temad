@@ -67,7 +67,7 @@ Built for **Wayland** environments — specifically targeting compositors like [
 
 ```bash
 # Clone the repository
-git clone https://forgejo.benitez/walkeradmin/temad.git
+git clone https://github.com/benitezgabriel/temad.git
 cd temad
 
 # Build the release binary
